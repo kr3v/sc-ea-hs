@@ -5,7 +5,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TemplateHaskell #-}
 
 module Main where
 
@@ -17,12 +16,12 @@ import Data.List.Index (imap)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (maybeToList)
 import GHC.RTS.Flags (TraceFlags (traceScheduler))
-import Graphics.Gloss.Data.Color (Color, blue, greyN, red, white)
+import Graphics.Gloss.Data.Color (Color, blue, greyN, orange, red, white)
 import Graphics.Gloss.Data.Display (Display (InWindow))
 import Graphics.Gloss.Data.Picture (Picture (..), blank, color, rectangleSolid, scale, text, translate)
 import Graphics.Gloss.Data.Point (Point)
 import Graphics.Gloss.Data.Vector (Vector)
-import Graphics.Gloss.Interface.IO.Game (Event (..), Key (..), KeyState (..), Modifiers, MouseButton (..), SpecialKey (..), black, playIO)
+import Graphics.Gloss.Interface.IO.Game (Event (..), Key (..), KeyState (..), Modifiers, MouseButton (..), SpecialKey (..), black, circleSolid, playIO)
 import Graphics.Gloss.Interface.Pure.Game (play)
 
 ---
@@ -85,7 +84,8 @@ data World = World
     _players :: Map.Map Int Player,
     _projectile :: Maybe Projectile,
     _status :: WorldStatus,
-    _transformer :: Picture -> Picture
+    _transformer :: Picture -> Picture,
+    _explosion :: Maybe Explosion
   }
 
 data PlayerControls = PlayerControls
@@ -115,6 +115,13 @@ data Projectile = Projectile
   }
   deriving (Show)
 
+data Explosion = Explosion
+  { _epos :: Point,
+    _radius :: Float,
+    _maxRadius :: Float
+  }
+  deriving (Show)
+
 $(makeLenses ''World)
 $(makeLenses ''WorldStatus)
 $(makeLenses ''Surface)
@@ -122,21 +129,23 @@ $(makeLenses ''PlayerControls)
 $(makeLenses ''PlayerObject)
 $(makeLenses ''Player)
 $(makeLenses ''Projectile)
+$(makeLenses ''Explosion)
 
 ---
 
 instance Renderable World where
   render :: World -> Picture
-  render w@(World s ps p st@(WorldStatus p' s') t) =
+  render w@(World s ps p st@(WorldStatus p' s') t ea) =
     let surface = render s
         pp = maybeToList $ render <$> p
         playersPictures = render <$> ps
         playersStatus = info <$> ps
         status = info st
         text' x y s = translate x y $ scale 0.2 0.2 $ text s
+        explosion' = maybeToList $ render <$> ea
         playersStatus' = (\(i, p) -> text' 5 (1000 - 25 - 30 * fromIntegral i) $ "  player " ++ show i ++ ": " ++ show (view controls p)) <$> Map.assocs ps
         status' = text' 5 (1000 - 25) status
-     in t $ Pictures $ surface : status' : Map.elems playersPictures ++ playersStatus' ++ pp
+     in t $ Pictures $ surface : status' : Map.elems playersPictures ++ playersStatus' ++ pp ++ explosion'
 
 instance TextualInfo WorldStatus where
   info :: WorldStatus -> String
@@ -165,6 +174,10 @@ instance TextualInfo Player where
 instance Renderable Projectile where
   render :: Projectile -> Picture
   render (Projectile (x, y) _ _) = Graphics.Gloss.Data.Picture.color black $ translate x y $ rectangleSolid 5 5
+
+instance Renderable Explosion where
+  render :: Explosion -> Picture
+  render (Explosion (x, y) r mr) = Graphics.Gloss.Data.Picture.color orange $ translate x y $ circleSolid r
 
 ---
 
@@ -202,7 +215,7 @@ playerKeyHandler KeyUp = modify str 1
 playerKeyHandler _ = id
 
 spaceKeyHandler :: World -> World
-spaceKeyHandler w@(World s ps p st@(WorldStatus p' s') t) =
+spaceKeyHandler w@(World s ps p st@(WorldStatus p' s') t _) =
   let Player (PlayerObject pos c) (PlayerControls a s) = ps Map.! p'
       s' :: Float = fromIntegral (unwrap s)
       a' :: Float = fromIntegral (unwrap a) * pi / 180
@@ -212,51 +225,44 @@ spaceKeyHandler w@(World s ps p st@(WorldStatus p' s') t) =
    in (over status (set state WSS_TURN_IN_PROGRESS) . set projectile (Just proj)) w
 
 worldEventHandler :: Event -> World -> IO World
-worldEventHandler e w@(World s ps p st@(WorldStatus p' s') t) =
-  case s' of
-    WSS_TURN_IN_PROGRESS -> return w
-    WSS_PLAYER_INPUT -> case e of
-      EventKey (SpecialKey KeySpace) Down m (x, y) -> return $ spaceKeyHandler w
-      EventKey (SpecialKey c) Down m (x, y) -> return $ over players (Map.update (Just . playerKeyHandler c) p') w
-      EventKey (SpecialKey c) Up m (x, y) -> return w
-      EventKey (Char c) ks m (x, y) -> return w
-      EventMotion (x, y) -> return w
-      _ -> print e >> return w
+worldEventHandler _ w@(World _ _ _ (WorldStatus p' WSS_TURN_IN_PROGRESS) _ _) = return w
+worldEventHandler (EventKey (SpecialKey KeySpace) Down _ _) w = return $ spaceKeyHandler w
+worldEventHandler (EventKey (SpecialKey c) Down _ _) w@(World _ _ _ (WorldStatus p' _) _ _) = return $ over players (Map.update (Just . playerKeyHandler c) p') w
+worldEventHandler _ w = return w
 
 produce :: Float -> Float -> [Float]
 produce x1 x2 = concat $ unfoldr (\x -> if x < x2 then Just ([x - 0.01, x + 0.01], x + 1) else Nothing) (fromIntegral $ floor x1 + 1)
 
 iterateProjectile :: Float -> Surface -> Projectile -> (Maybe Point, Projectile)
 iterateProjectile f s (Projectile (x0, y0) (vx, vy) t) =
-  let dx = vx * f
-      dy = vy * f
+  let dx = vx * 2 * f
+      dy = vy * 2 * f
       x1 = x0 + dx
       y1 = y0 + dy
-      p = Projectile (x1, y1) (vx, vy - 10 * f) t
+      p = Projectile (x1, y1) (vx, vy - 10 * 2*f) t
       xs = produce x0 x1
       ys = (\x -> (x - x0) / dx * dy + y0) <$> xs
       heights = (\x -> snd $ putOn s (x, 0)) <$> xs
-      collision = find (uncurry (<)) (zip ys heights)
+      collision = (\(x,y,_) -> (x, y)) <$> find (\(_, y, h) -> y < h) (zip3 xs ys heights)
    in (collision, p)
-   
--- over status (set state WSS_PLAYER_INPUT . set turn (if t == 1 then 2 else 1)) w
+
+nextPlayerMove :: World -> World
+nextPlayerMove w@(World _ _ _ (WorldStatus t _) _ _) = set status (WorldStatus (if t == 1 then 2 else 1) WSS_PLAYER_INPUT) w
+
 handleProjectileCollision :: Point -> World -> World
-handleProjectileCollision c w@(World s ps (Just p) st@(WorldStatus t WSS_TURN_IN_PROGRESS) _) = over status (set state WSS_PLAYER_INPUT . set turn (if t == 1 then 2 else 1)) w
+handleProjectileCollision c w@(World s ps (Just p) st@(WorldStatus t WSS_TURN_IN_PROGRESS) _ _) = nextPlayerMove w
 
 worldTickHandler :: Float -> World -> IO World
-worldTickHandler f w@(World _ _ _ (WorldStatus _ WSS_PLAYER_INPUT) _) = return w
-worldTickHandler f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _) = return $ over status (set state WSS_PLAYER_INPUT) w
-worldTickHandler f w@(World s _ (Just p) st@(WorldStatus _ WSS_TURN_IN_PROGRESS) _) =
+worldTickHandler f w@(World _ _ _ (WorldStatus _ WSS_PLAYER_INPUT) _ _) = return w
+worldTickHandler f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ Nothing) = return $ nextPlayerMove w
+worldTickHandler f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ (Just (Explosion c r mr))) = return $ set explosion (if r < mr then Just $ Explosion c (r + 2 * f) mr else Nothing) w
+worldTickHandler f w@(World s _ (Just p) (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _) =
   let (c, p') = iterateProjectile f s p
    in return $ case c of
-        Just p -> handleProjectileCollision p w
+        Just c' -> set projectile Nothing . set explosion (Just $ Explosion c' 0 10) $ w
         Nothing -> set projectile (Just p') w
 
 --
-
--- TODO:
--- refactoring
--- implement player controls
 
 main :: IO ()
 main = do
@@ -268,7 +274,7 @@ main = do
       surface = Surface my mx $ sinSurface mx my <$> take (mx + 1) [0 ..]
       player1 = Player (PlayerObject (putOn surface (250, 0)) red) emptyControls
       player2 = Player (PlayerObject (putOn surface (750, 0)) blue) emptyControls
-      world :: World = World surface (Map.fromList [(1, player1), (2, player2)]) Nothing (WorldStatus 1 WSS_PLAYER_INPUT) transformer
+      world :: World = World surface (Map.fromList [(1, player1), (2, player2)]) Nothing (WorldStatus 1 WSS_PLAYER_INPUT) transformer Nothing
 
   print surface
 
