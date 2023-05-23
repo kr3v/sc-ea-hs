@@ -145,11 +145,12 @@ instance Renderable World where
         explosion' = maybeToList $ render <$> ea
         playersStatus' = (\(i, p) -> text' 5 (1000 - 25 - 30 * fromIntegral i) $ "  player " ++ show i ++ ": " ++ show (view controls p)) <$> Map.assocs ps
         status' = text' 5 (1000 - 25) status
-     in t $ Pictures $ surface : status' : Map.elems playersPictures ++ playersStatus' ++ pp ++ explosion'
+        debugInfo = text' 5 (1000 - 25 - 30 * 3) $ "explosion: " ++ show ea ++ ", projectile: " ++ show p
+     in t $ Pictures $ surface : debugInfo : status' : Map.elems playersPictures ++ playersStatus' ++ pp ++ explosion'
 
 instance TextualInfo WorldStatus where
   info :: WorldStatus -> String
-  info (WorldStatus p s) = "player: " ++ show p ++ ", state: " ++ show s
+  info (WorldStatus p s) = "player: " ++ show p ++ ", state: " ++ show s ++ ", press space to shoot"
 
 instance Renderable Surface where
   render :: Surface -> Picture
@@ -233,17 +234,20 @@ worldEventHandler _ w = return w
 produce :: Float -> Float -> [Float]
 produce x1 x2 = concat $ unfoldr (\x -> if x < x2 then Just ([x - 0.01, x + 0.01], x + 1) else Nothing) (fromIntegral $ floor x1 + 1)
 
+animationSpeed :: Float
+animationSpeed = 5
+
 iterateProjectile :: Float -> Surface -> Projectile -> (Maybe Point, Projectile)
 iterateProjectile f s (Projectile (x0, y0) (vx, vy) t) =
-  let dx = vx * 2 * f
-      dy = vy * 2 * f
+  let dx = vx * animationSpeed * f
+      dy = vy * animationSpeed * f
       x1 = x0 + dx
       y1 = y0 + dy
-      p = Projectile (x1, y1) (vx, vy - 10 * 2*f) t
+      p = Projectile (x1, y1) (vx, vy - 10 * animationSpeed * f) t
       xs = produce x0 x1
       ys = (\x -> (x - x0) / dx * dy + y0) <$> xs
       heights = (\x -> snd $ putOn s (x, 0)) <$> xs
-      collision = (\(x,y,_) -> (x, y)) <$> find (\(_, y, h) -> y < h) (zip3 xs ys heights)
+      collision = (\(x, y, _) -> (x, y)) <$> find (\(_, y, h) -> y < h) (zip3 xs ys heights)
    in (collision, p)
 
 nextPlayerMove :: World -> World
@@ -254,26 +258,25 @@ handleProjectileCollision c w@(World s ps (Just p) st@(WorldStatus t WSS_TURN_IN
 
 worldTickHandler :: Float -> World -> IO World
 worldTickHandler f w@(World _ _ _ (WorldStatus _ WSS_PLAYER_INPUT) _ _) = return w
-worldTickHandler f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ Nothing) = return $ nextPlayerMove w
-worldTickHandler f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ (Just (Explosion c r mr))) = return $ set explosion (if r < mr then Just $ Explosion c (r + 2 * f) mr else Nothing) w
 worldTickHandler f w@(World s _ (Just p) (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _) =
   let (c, p') = iterateProjectile f s p
    in return $ case c of
         Just c' -> set projectile Nothing . set explosion (Just $ Explosion c' 0 10) $ w
         Nothing -> set projectile (Just p') w
+worldTickHandler f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ (Just (Explosion c r mr))) = return $ set explosion (if r < mr then Just $ Explosion c (r + animationSpeed * f) mr else Nothing) w
+worldTickHandler f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ Nothing) = return $ nextPlayerMove w
 
---
+-- collision does not work for player 2 - because collision handler only works if x0 < x1 (i.e. angle < 90 or angle > 270)
 
 main :: IO ()
 main = do
   let mx = 1000 :: Int
       my = 1000 :: Int
-      emptyControls = PlayerControls (wrap 75) (wrap 50)
       windowSize = (mx, my)
       transformer = transformPicture (-fromIntegral mx / 2, -fromIntegral my / 2)
       surface = Surface my mx $ sinSurface mx my <$> take (mx + 1) [0 ..]
-      player1 = Player (PlayerObject (putOn surface (250, 0)) red) emptyControls
-      player2 = Player (PlayerObject (putOn surface (750, 0)) blue) emptyControls
+      player1 = Player (PlayerObject (putOn surface (250, 0)) red) (PlayerControls (wrap 75) (wrap 50))
+      player2 = Player (PlayerObject (putOn surface (750, 0)) blue) (PlayerControls (wrap ((90 - 75) + 90)) (wrap 50))
       world :: World = World surface (Map.fromList [(1, player1), (2, player2)]) Nothing (WorldStatus 1 WSS_PLAYER_INPUT) transformer Nothing
 
   print surface
