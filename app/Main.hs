@@ -5,16 +5,19 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 
 module Main where
 
-import Control.Lens (Lens', makeLenses, over, set, view, (%~), (&), (.~), (^.))
+import Control.Lens (Lens', makeLenses, over, set, view, (%~), (&), (.~), (^.), Bifunctor (bimap))
+import Control.Lens.Prism (_Just)
 import Data.Foldable (find)
 import Data.Functor ((<&>))
 import Data.List (unfoldr)
 import Data.List.Index (imap)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (maybeToList)
+import qualified Data.Set as Set
+import Data.Maybe (catMaybes, maybeToList)
 import GHC.RTS.Flags (TraceFlags (traceScheduler))
 import Graphics.Gloss.Data.Color (Color, blue, greyN, orange, red, white)
 import Graphics.Gloss.Data.Display (Display (InWindow))
@@ -23,7 +26,7 @@ import Graphics.Gloss.Data.Point (Point)
 import Graphics.Gloss.Data.Vector (Vector)
 import Graphics.Gloss.Interface.IO.Game (Event (..), Key (..), KeyState (..), Modifiers, MouseButton (..), SpecialKey (..), black, circleSolid, playIO)
 import Graphics.Gloss.Interface.Pure.Game (play)
-import Numeric
+import Numeric (showFFloat)
 
 ---
 
@@ -76,7 +79,7 @@ data WorldStatus = WorldStatus
 data Surface = Surface
   { _maxHeight :: Int,
     _width :: Int,
-    _heights :: [Int]
+    _heights :: Map.Map Int Int
   }
   deriving (Show)
 
@@ -124,8 +127,8 @@ data Explosion = Explosion
 showF2 :: RealFloat a => a -> String
 showF2 = flip (showFFloat (Just 2)) ""
 
-showTF2 :: RealFloat a => (a,a) -> String
-showTF2 (a,b) = "(" ++ showF2 a ++ "," ++ showF2 b ++ ")"
+showTF2 :: RealFloat a => (a, a) -> String
+showTF2 (a, b) = "(" ++ showF2 a ++ "," ++ showF2 b ++ ")"
 
 instance Show Projectile where
   show :: Projectile -> String
@@ -156,7 +159,7 @@ instance Renderable World where
         status = info st
         text' x y s = translate x y $ scale 0.2 0.2 $ text s
         explosion' = maybeToList $ render <$> ea
-        playersStatus' = (\(i, p) -> text' 5 (1000 - 25 - 30 * fromIntegral i) $ "  player " ++ show i ++ ": " ++ show (view controls p)) <$> Map.assocs ps
+        playersStatus' = (\(i, p) -> text' 5 (1000 - 25 - 30 * fromIntegral i) $ "  player " ++ show i ++ ": " ++ show (p ^. controls)) <$> Map.assocs ps
         status' = text' 5 (1000 - 25) status
         debugInfo = text' 5 (1000 - 25 - 30 * 3) $ "explosion: " ++ show ea ++ ", projectile: " ++ show p
      in t $ Pictures $ surface : debugInfo : status' : Map.elems playersPictures ++ playersStatus' ++ pp ++ explosion'
@@ -167,7 +170,7 @@ instance TextualInfo WorldStatus where
 
 instance Renderable Surface where
   render :: Surface -> Picture
-  render (Surface _ _ hs) = Pictures $ imap (\x h -> translate (fromIntegral x) (fromIntegral (h `div` 2)) $ rectangleSolid 1 (fromIntegral h)) hs
+  render (Surface _ _ hs) = Pictures $ imap (\x h -> translate (fromIntegral x) (fromIntegral (h `div` 2)) $ rectangleSolid 1 (fromIntegral h)) $ Map.elems hs
 
 instance TextualInfo PlayerControls where
   info :: PlayerControls -> String
@@ -199,7 +202,20 @@ transformPicture :: Vector -> Picture -> Picture
 transformPicture (dx, dy) = translate dx dy
 
 putOn :: Surface -> Point -> Point
-putOn (Surface mh mw hs) (x, y) = (x, fromIntegral $ hs !! round x)
+putOn (Surface mh mw hs) (x, y) = (x, fromIntegral $ hs Map.! round x)
+
+intersectionPoints ::
+  Point -> -- center of the circle
+  Float -> -- radius of the circle
+  Float -> -- x coordinate of vertical line
+  Maybe (Point, Point) -- intersection points
+intersectionPoints (x0, y0) r x
+  | discriminant < 0 = Nothing
+  | otherwise = Just ((x, y1), (x, y2))
+  where
+    discriminant = r ^ 2 - (x - x0) ^ 2
+    y1 = y0 - sqrt discriminant
+    y2 = y0 + sqrt discriminant
 
 sinSurface :: Int -> Int -> Int -> Int
 sinSurface mx my x =
@@ -208,11 +224,11 @@ sinSurface mx my x =
       my' = fromIntegral my :: Float
       x'_norm = x' / mx'
       x'_norm_2pi = x'_norm * 2 * pi
-      h_var0 = sin x'_norm_2pi * (my' / 4)
-      h_var1 = sin (x'_norm_2pi * 2) * (my' / 8)
-      h_var2 = sin (x'_norm_2pi * 4) * (my' / 16)
-      h_var3 = sin (x'_norm_2pi * 8) * (my' / 32)
-      h_var4 = sin (x'_norm_2pi * 16) * (my' / 64)
+      h_var0 = sin x'_norm_2pi * (my' / 40)
+      h_var1 = sin (x'_norm_2pi * 2) * (my' / 80)
+      h_var2 = sin (x'_norm_2pi * 4) * (my' / 160)
+      h_var3 = sin (x'_norm_2pi * 8) * (my' / 320)
+      h_var4 = sin (x'_norm_2pi * 16) * (my' / 640)
       h = round (h_var0 + h_var1 + h_var2 + h_var3 + h_var4 + my' / 3)
    in h
 
@@ -236,12 +252,12 @@ spaceKeyHandler w@(World s ps p st@(WorldStatus p' s') t _) =
       vx = s' * cos a'
       vy = s' * sin a'
       proj = Projectile pos (vx, vy) SHELL
-   in (over status (set state WSS_TURN_IN_PROGRESS) . set projectile (Just proj)) w
+   in set (status . state) WSS_TURN_IN_PROGRESS . set projectile (Just proj) $ w
 
 worldEventHandler :: Event -> World -> IO World
-worldEventHandler _ w@(World _ _ _ (WorldStatus p' WSS_TURN_IN_PROGRESS) _ _) = return w
+worldEventHandler _ w@(World _ _ _ (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _) = return w
 worldEventHandler (EventKey (SpecialKey KeySpace) Down _ _) w = return $ spaceKeyHandler w
-worldEventHandler (EventKey (SpecialKey c) Down _ _) w@(World _ _ _ (WorldStatus p' _) _ _) = return $ over players (Map.update (Just . playerKeyHandler c) p') w
+worldEventHandler (EventKey (SpecialKey c) Down _ _) w = return $ over players (Map.update (Just . playerKeyHandler c) (view (status . turn) w)) w
 worldEventHandler _ w = return w
 
 produce :: Float -> Float -> [Float]
@@ -259,15 +275,12 @@ iterateProjectile f s (Projectile (x0, y0) (vx, vy) t) =
       p = Projectile (x1, y1) (vx, vy - 10 * animationSpeed * f) t
       xs = produce (min x0 x1) (max x0 x1)
       ys = (\x -> (x - x0) / dx * dy + y0) <$> xs
-      heights = (\x -> snd $ putOn s (x, 0)) <$> xs
-      collision = (\(x, y, _) -> (x, y)) <$> find (\(_, y, h) -> y < h) (zip3 xs ys heights)
+      hs = (\x -> snd $ putOn s (x, 0)) <$> xs
+      collision = (\(x, y, _) -> (x, y)) <$> find (\(_, y, h) -> y < h) (zip3 xs ys hs)
    in (collision, p)
 
 nextPlayerMove :: World -> World
 nextPlayerMove w@(World _ _ _ (WorldStatus t _) _ _) = set status (WorldStatus (if t == 1 then 2 else 1) WSS_PLAYER_INPUT) w
-
-handleProjectileCollision :: Point -> World -> World
-handleProjectileCollision c w@(World s ps (Just p) st@(WorldStatus t WSS_TURN_IN_PROGRESS) _ _) = nextPlayerMove w
 
 worldTickHandler :: Float -> World -> IO World
 worldTickHandler f w@(World _ _ _ (WorldStatus _ WSS_PLAYER_INPUT) _ _) = return w
@@ -276,7 +289,18 @@ worldTickHandler f w@(World s _ (Just p) (WorldStatus _ WSS_TURN_IN_PROGRESS) _ 
    in return $ case c of
         Just c' -> set projectile Nothing . set explosion (Just $ Explosion c' 0 10) $ w
         Nothing -> set projectile (Just p') w
-worldTickHandler f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ (Just (Explosion c r mr))) = return $ set explosion (if r < mr then Just $ Explosion c (r + animationSpeed * f) mr else Nothing) w
+worldTickHandler f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ (Just (Explosion (x, y) r mr)))
+  | r < mr = return $ over (explosion . _Just . radius) ((f * animationSpeed) +) w
+  | otherwise =
+      let xs = [x - mr .. x + mr]
+          hs = (\x -> snd $ putOn (w ^. surface) (x, 0)) <$> xs
+          decide h x' ((x1, y1), (x2, y2))
+            | y2 < h = h - (y2 - y1)
+            | y1 < h = y1
+            | otherwise = h
+          decide'(a,b,c) = (b, decide a b c)
+          z = Map.fromList (bimap round round <$> (decide' <$> catMaybes (zipWith (\h x' -> (h,x',) <$> intersectionPoints (x, y) mr x') hs xs)))
+       in return $ over (surface . heights) (Map.union z) . set explosion Nothing $ w
 worldTickHandler f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ Nothing) = return $ nextPlayerMove w
 
 main :: IO ()
@@ -285,7 +309,7 @@ main = do
       my = 1000 :: Int
       windowSize = (mx, my)
       transformer = transformPicture (-fromIntegral mx / 2,-fromIntegral my / 2)
-      surface = Surface my mx $ sinSurface mx my <$> take (mx + 1) [0 ..]
+      surface = Surface my mx $ Map.fromSet (sinSurface mx my) (Set.fromList $ take (mx + 1) [0 ..])
       player1 = Player (PlayerObject (putOn surface (250, 0)) red) (PlayerControls (wrap 160) (wrap 50))
       player2 = Player (PlayerObject (putOn surface (750, 0)) blue) (PlayerControls (wrap ((90 - 75) + 90)) (wrap 50))
       world :: World = World surface (Map.fromList [(1, player1), (2, player2)]) Nothing (WorldStatus 1 WSS_PLAYER_INPUT) transformer Nothing
