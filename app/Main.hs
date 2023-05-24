@@ -23,6 +23,7 @@ import Graphics.Gloss.Data.Point (Point)
 import Graphics.Gloss.Data.Vector (Vector)
 import Graphics.Gloss.Interface.IO.Game (Event (..), Key (..), KeyState (..), Modifiers, MouseButton (..), SpecialKey (..), black, circleSolid, playIO)
 import Graphics.Gloss.Interface.Pure.Game (play)
+import Numeric
 
 ---
 
@@ -64,7 +65,7 @@ class TextualInfo a where
 
 --
 
-data WorldStatusState = WSS_PLAYER_INPUT | WSS_TURN_IN_PROGRESS deriving (Show)
+data WorldStatusState = WSS_PLAYER_INPUT | WSS_TURN_IN_PROGRESS deriving (Show, Eq)
 
 data WorldStatus = WorldStatus
   { _turn :: Int,
@@ -113,14 +114,26 @@ data Projectile = Projectile
     _speed :: Vector,
     _ptype :: ProjectileType
   }
-  deriving (Show)
 
 data Explosion = Explosion
   { _epos :: Point,
     _radius :: Float,
     _maxRadius :: Float
   }
-  deriving (Show)
+
+showF2 :: RealFloat a => a -> String
+showF2 = flip (showFFloat (Just 2)) ""
+
+showTF2 :: RealFloat a => (a,a) -> String
+showTF2 (a,b) = "(" ++ showF2 a ++ "," ++ showF2 b ++ ")"
+
+instance Show Projectile where
+  show :: Projectile -> String
+  show (Projectile p s t) = "Projectile " ++ showTF2 p ++ " " ++ showTF2 s ++ " " ++ show t
+
+instance Show Explosion where
+  show :: Explosion -> String
+  show (Explosion p r mr) = "Explosion " ++ showTF2 p ++ " " ++ showF2 r ++ " " ++ showF2 mr
 
 $(makeLenses ''World)
 $(makeLenses ''WorldStatus)
@@ -150,7 +163,7 @@ instance Renderable World where
 
 instance TextualInfo WorldStatus where
   info :: WorldStatus -> String
-  info (WorldStatus p s) = "player: " ++ show p ++ ", state: " ++ show s ++ ", press space to shoot"
+  info (WorldStatus p s) = "player: " ++ show p ++ ", state: " ++ show s ++ (if s == WSS_PLAYER_INPUT then " (press space to make a turn)" else "")
 
 instance Renderable Surface where
   render :: Surface -> Picture
@@ -235,7 +248,7 @@ produce :: Float -> Float -> [Float]
 produce x1 x2 = concat $ unfoldr (\x -> if x < x2 then Just ([x - 0.01, x + 0.01], x + 1) else Nothing) (fromIntegral $ floor x1 + 1)
 
 animationSpeed :: Float
-animationSpeed = 5
+animationSpeed = 10
 
 iterateProjectile :: Float -> Surface -> Projectile -> (Maybe Point, Projectile)
 iterateProjectile f s (Projectile (x0, y0) (vx, vy) t) =
@@ -244,7 +257,7 @@ iterateProjectile f s (Projectile (x0, y0) (vx, vy) t) =
       x1 = x0 + dx
       y1 = y0 + dy
       p = Projectile (x1, y1) (vx, vy - 10 * animationSpeed * f) t
-      xs = produce x0 x1
+      xs = produce (min x0 x1) (max x0 x1)
       ys = (\x -> (x - x0) / dx * dy + y0) <$> xs
       heights = (\x -> snd $ putOn s (x, 0)) <$> xs
       collision = (\(x, y, _) -> (x, y)) <$> find (\(_, y, h) -> y < h) (zip3 xs ys heights)
@@ -266,16 +279,14 @@ worldTickHandler f w@(World s _ (Just p) (WorldStatus _ WSS_TURN_IN_PROGRESS) _ 
 worldTickHandler f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ (Just (Explosion c r mr))) = return $ set explosion (if r < mr then Just $ Explosion c (r + animationSpeed * f) mr else Nothing) w
 worldTickHandler f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ Nothing) = return $ nextPlayerMove w
 
--- collision does not work for player 2 - because collision handler only works if x0 < x1 (i.e. angle < 90 or angle > 270)
-
 main :: IO ()
 main = do
   let mx = 1000 :: Int
       my = 1000 :: Int
       windowSize = (mx, my)
-      transformer = transformPicture (-fromIntegral mx / 2, -fromIntegral my / 2)
+      transformer = transformPicture (-fromIntegral mx / 2,-fromIntegral my / 2)
       surface = Surface my mx $ sinSurface mx my <$> take (mx + 1) [0 ..]
-      player1 = Player (PlayerObject (putOn surface (250, 0)) red) (PlayerControls (wrap 75) (wrap 50))
+      player1 = Player (PlayerObject (putOn surface (250, 0)) red) (PlayerControls (wrap 160) (wrap 50))
       player2 = Player (PlayerObject (putOn surface (750, 0)) blue) (PlayerControls (wrap ((90 - 75) + 90)) (wrap 50))
       world :: World = World surface (Map.fromList [(1, player1), (2, player2)]) Nothing (WorldStatus 1 WSS_PLAYER_INPUT) transformer Nothing
 
