@@ -9,15 +9,15 @@
 
 module Main where
 
-import Control.Lens (Lens', makeLenses, over, set, view, (%~), (&), (.~), (^.), Bifunctor (bimap))
+import Control.Lens (Bifunctor (bimap), Lens', makeLenses, over, set, view, (%~), (&), (.~), (^.))
 import Control.Lens.Prism (_Just)
 import Data.Foldable (find)
 import Data.Functor ((<&>))
 import Data.List (unfoldr)
 import Data.List.Index (imap)
 import qualified Data.Map.Strict as Map
-import qualified Data.Set as Set
 import Data.Maybe (catMaybes, maybeToList)
+import qualified Data.Set as Set
 import GHC.RTS.Flags (TraceFlags (traceScheduler))
 import Graphics.Gloss.Data.Color (Color, blue, greyN, orange, red, white)
 import Graphics.Gloss.Data.Display (Display (InWindow))
@@ -27,6 +27,7 @@ import Graphics.Gloss.Data.Vector (Vector)
 import Graphics.Gloss.Interface.IO.Game (Event (..), Key (..), KeyState (..), Modifiers, MouseButton (..), SpecialKey (..), black, circleSolid, playIO)
 import Graphics.Gloss.Interface.Pure.Game (play)
 import Numeric (showFFloat)
+import Data.Fixed
 
 ---
 
@@ -83,13 +84,19 @@ data Surface = Surface
   }
   deriving (Show)
 
+newtype PressedKeyState = PressedKeyState
+  { _time :: Float
+  }
+  deriving (Show)
+
 data World = World
   { _surface :: Surface,
     _players :: Map.Map Int Player,
     _projectile :: Maybe Projectile,
     _status :: WorldStatus,
     _transformer :: Picture -> Picture,
-    _explosion :: Maybe Explosion
+    _explosion :: Maybe Explosion,
+    _keysPressed :: Map.Map SpecialKey PressedKeyState
   }
 
 data PlayerControls = PlayerControls
@@ -138,6 +145,7 @@ instance Show Explosion where
   show :: Explosion -> String
   show (Explosion p r mr) = "Explosion " ++ showTF2 p ++ " " ++ showF2 r ++ " " ++ showF2 mr
 
+$(makeLenses ''PressedKeyState)
 $(makeLenses ''World)
 $(makeLenses ''WorldStatus)
 $(makeLenses ''Surface)
@@ -151,7 +159,7 @@ $(makeLenses ''Explosion)
 
 instance Renderable World where
   render :: World -> Picture
-  render w@(World s ps p st@(WorldStatus p' s') t ea) =
+  render w@(World s ps p st@(WorldStatus p' s') t ea _) =
     let surface = render s
         pp = maybeToList $ render <$> p
         playersPictures = render <$> ps
@@ -237,28 +245,38 @@ sinSurface mx my x =
 modify :: BoundedPlus b => Lens' PlayerControls b -> Int -> Player -> Player
 modify a d = over (controls . a) (<+> d)
 
-playerKeyHandler :: SpecialKey -> Player -> Player
-playerKeyHandler KeyLeft = modify angle (-1)
-playerKeyHandler KeyRight = modify angle 1
-playerKeyHandler KeyDown = modify str (-1)
-playerKeyHandler KeyUp = modify str 1
-playerKeyHandler _ = id
+playerKeyHandler' :: SpecialKey -> Player -> Player
+playerKeyHandler' KeyLeft = modify angle (-1)
+playerKeyHandler' KeyRight = modify angle 1
+playerKeyHandler' KeyDown = modify str (-1)
+playerKeyHandler' KeyUp = modify str 1
+playerKeyHandler' _ = id
+
+playerKeyHandler :: SpecialKey -> World -> World
+playerKeyHandler c w = over players (Map.update (Just . playerKeyHandler' c) (view (status . turn) w)) w
+
+specialKeyUpHandler :: SpecialKey -> World -> World
+specialKeyUpHandler k = over keysPressed (Map.delete k) . playerKeyHandler k
+
+specialKeyDownHandler :: SpecialKey -> World -> World
+specialKeyDownHandler k = over keysPressed (Map.insert k (PressedKeyState 0.0)) . playerKeyHandler k
 
 spaceKeyHandler :: World -> World
-spaceKeyHandler w@(World s ps p st@(WorldStatus p' s') t _) =
+spaceKeyHandler w@(World s ps p st@(WorldStatus p' s') t _ _) =
   let Player (PlayerObject pos c) (PlayerControls a s) = ps Map.! p'
       s' :: Float = fromIntegral (unwrap s)
       a' :: Float = fromIntegral (unwrap a) * pi / 180
       vx = s' * cos a'
       vy = s' * sin a'
       proj = Projectile pos (vx, vy) SHELL
-   in set (status . state) WSS_TURN_IN_PROGRESS . set projectile (Just proj) $ w
+   in set (status . state) WSS_TURN_IN_PROGRESS . set projectile (Just proj) . set keysPressed Map.empty $ w
 
 worldEventHandler :: Event -> World -> IO World
-worldEventHandler _ w@(World _ _ _ (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _) = return w
-worldEventHandler (EventKey (SpecialKey KeySpace) Down _ _) w = return $ spaceKeyHandler w
-worldEventHandler (EventKey (SpecialKey c) Down _ _) w = return $ over players (Map.update (Just . playerKeyHandler c) (view (status . turn) w)) w
-worldEventHandler _ w = return w
+worldEventHandler _ w@(World _ _ _ (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _ _) = return w
+worldEventHandler (EventKey (SpecialKey KeySpace) Up _ _) w = return $ spaceKeyHandler w
+worldEventHandler (EventKey (SpecialKey c) Up _ _) w = return $ specialKeyUpHandler c w
+worldEventHandler (EventKey (SpecialKey c) Down _ _) w = return $ specialKeyDownHandler c w
+worldEventHandler e w = print e >> return w
 
 produce :: Float -> Float -> [Float]
 produce x1 x2 = concat $ unfoldr (\x -> if x < x2 then Just ([x - 0.01, x + 0.01], x + 1) else Nothing) (fromIntegral $ floor x1 + 1)
@@ -280,16 +298,21 @@ iterateProjectile f s (Projectile (x0, y0) (vx, vy) t) =
    in (collision, p)
 
 nextPlayerMove :: World -> World
-nextPlayerMove w@(World _ _ _ (WorldStatus t _) _ _) = set status (WorldStatus (if t == 1 then 2 else 1) WSS_PLAYER_INPUT) w
+nextPlayerMove w@(World _ _ _ (WorldStatus t _) _ _ _) = set status (WorldStatus (if t == 1 then 2 else 1) WSS_PLAYER_INPUT) w
 
 worldTickHandler :: Float -> World -> IO World
-worldTickHandler f w@(World _ _ _ (WorldStatus _ WSS_PLAYER_INPUT) _ _) = return w
-worldTickHandler f w@(World s _ (Just p) (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _) =
+worldTickHandler df w@(World _ _ _ (WorldStatus _ WSS_PLAYER_INPUT) _ _ ks) = do
+  let
+    keyPressedTickHandler f k (PressedKeyState t) = (if ((t + df) / 0.2) > (t / 0.2) then playerKeyHandler k . f else f, PressedKeyState (t + df))
+    (c, ks') = Map.mapAccumRWithKey keyPressedTickHandler id ks
+  return $ set keysPressed ks' . c $ w
+
+worldTickHandler f w@(World s _ (Just p) (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _ _) =
   let (c, p') = iterateProjectile f s p
    in return $ case c of
         Just c' -> set projectile Nothing . set explosion (Just $ Explosion c' 0 10) $ w
         Nothing -> set projectile (Just p') w
-worldTickHandler f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ (Just (Explosion (x, y) r mr)))
+worldTickHandler f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ (Just (Explosion (x, y) r mr)) ks)
   | r < mr = return $ over (explosion . _Just . radius) ((f * animationSpeed) +) w
   | otherwise =
       let xs = [x - mr .. x + mr]
@@ -298,21 +321,23 @@ worldTickHandler f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ (
             | y2 < h = h - (y2 - y1)
             | y1 < h = y1
             | otherwise = h
-          decide'(a,b,c) = (b, decide a b c)
+          decide' (a, b, c) = (b, decide a b c)
           z = Map.fromList (bimap round round <$> (decide' <$> catMaybes (zipWith (\h x' -> (h,x',) <$> intersectionPoints (x, y) mr x') hs xs)))
        in return $ over (surface . heights) (Map.union z) . set explosion Nothing $ w
-worldTickHandler f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ Nothing) = return $ nextPlayerMove w
+worldTickHandler f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ Nothing _) = return $ nextPlayerMove w
+
+-- bugs: angle=90 does not work
 
 main :: IO ()
 main = do
   let mx = 1000 :: Int
       my = 1000 :: Int
       windowSize = (mx, my)
-      transformer = transformPicture (-fromIntegral mx / 2,-fromIntegral my / 2)
+      transformer = transformPicture (-fromIntegral mx / 2, -fromIntegral my / 2)
       surface = Surface my mx $ Map.fromSet (sinSurface mx my) (Set.fromList $ take (mx + 1) [0 ..])
       player1 = Player (PlayerObject (putOn surface (250, 0)) red) (PlayerControls (wrap 160) (wrap 50))
       player2 = Player (PlayerObject (putOn surface (750, 0)) blue) (PlayerControls (wrap ((90 - 75) + 90)) (wrap 50))
-      world :: World = World surface (Map.fromList [(1, player1), (2, player2)]) Nothing (WorldStatus 1 WSS_PLAYER_INPUT) transformer Nothing
+      world :: World = World surface (Map.fromList [(1, player1), (2, player2)]) Nothing (WorldStatus 1 WSS_PLAYER_INPUT) transformer Nothing Map.empty
 
   print surface
 
