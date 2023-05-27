@@ -11,6 +11,7 @@ module Main where
 
 import Control.Lens (Bifunctor (bimap), Lens', makeLenses, over, set, view, (%~), (&), (.~), (^.))
 import Control.Lens.Prism (_Just)
+import Data.Fixed ()
 import Data.Foldable (find)
 import Data.Functor ((<&>))
 import Data.List (unfoldr)
@@ -27,7 +28,6 @@ import Graphics.Gloss.Data.Vector (Vector)
 import Graphics.Gloss.Interface.IO.Game (Event (..), Key (..), KeyState (..), Modifiers, MouseButton (..), SpecialKey (..), black, circleSolid, playIO)
 import Graphics.Gloss.Interface.Pure.Game (play)
 import Numeric (showFFloat)
-import Data.Fixed
 
 ---
 
@@ -107,7 +107,7 @@ data PlayerControls = PlayerControls
 
 data PlayerObject = PlayerObject
   { _pos :: Point,
-    _color :: Color
+    _pcolor :: Color
   }
   deriving (Show)
 
@@ -161,7 +161,7 @@ instance Renderable World where
   render :: World -> Picture
   render w@(World s ps p st@(WorldStatus p' s') t ea _) =
     let surface = render s
-        pp = maybeToList $ render <$> p
+        projectile = render <$> maybeToList p
         playersPictures = render <$> ps
         playersStatus = info <$> ps
         status = info st
@@ -170,7 +170,7 @@ instance Renderable World where
         playersStatus' = (\(i, p) -> text' 5 (1000 - 25 - 30 * fromIntegral i) $ "  player " ++ show i ++ ": " ++ show (p ^. controls)) <$> Map.assocs ps
         status' = text' 5 (1000 - 25) status
         debugInfo = text' 5 (1000 - 25 - 30 * 3) $ "explosion: " ++ show ea ++ ", projectile: " ++ show p
-     in t $ Pictures $ surface : debugInfo : status' : Map.elems playersPictures ++ playersStatus' ++ pp ++ explosion'
+     in t $ Pictures $ surface : debugInfo : status' : Map.elems playersPictures ++ playersStatus' ++ projectile ++ explosion'
 
 instance TextualInfo WorldStatus where
   info :: WorldStatus -> String
@@ -186,11 +186,18 @@ instance TextualInfo PlayerControls where
 
 instance Renderable PlayerObject where
   render :: PlayerObject -> Picture
-  render (PlayerObject (x, y) c) = Graphics.Gloss.Data.Picture.color c $ translate x y $ rectangleSolid 10 10
+  render (PlayerObject (x, y) c) = color c $ translate x y $ rectangleSolid 10 10
 
 instance Renderable Player where
   render :: Player -> Picture
-  render (Player o c) = render o
+  render (Player o@(PlayerObject (x,y) _) (PlayerControls a s)) =
+    let
+      z x y = color (greyN 0.5) $ translate x y $ circleSolid 2
+      a' = fromIntegral (unwrap a) * pi / 180
+      step = 10
+      ps = foldr (<>) (render o) $ (\i -> z (x + i * step * cos a') (y + i * step * sin a')) . fromIntegral <$> [1..(unwrap s `div` round step)]
+    in ps
+
 
 instance TextualInfo Player where
   info :: Player -> String
@@ -198,11 +205,11 @@ instance TextualInfo Player where
 
 instance Renderable Projectile where
   render :: Projectile -> Picture
-  render (Projectile (x, y) _ _) = Graphics.Gloss.Data.Picture.color black $ translate x y $ rectangleSolid 5 5
+  render (Projectile (x, y) _ _) = color black $ translate x y $ rectangleSolid 5 5
 
 instance Renderable Explosion where
   render :: Explosion -> Picture
-  render (Explosion (x, y) r mr) = Graphics.Gloss.Data.Picture.color orange $ translate x y $ circleSolid r
+  render (Explosion (x, y) r mr) = color orange $ translate x y $ circleSolid r
 
 ---
 
@@ -246,8 +253,8 @@ modify :: BoundedPlus b => Lens' PlayerControls b -> Int -> Player -> Player
 modify a d = over (controls . a) (<+> d)
 
 playerKeyHandler' :: SpecialKey -> Player -> Player
-playerKeyHandler' KeyLeft = modify angle (-1)
-playerKeyHandler' KeyRight = modify angle 1
+playerKeyHandler' KeyLeft = modify angle 1
+playerKeyHandler' KeyRight = modify angle (-1)
 playerKeyHandler' KeyDown = modify str (-1)
 playerKeyHandler' KeyUp = modify str 1
 playerKeyHandler' _ = id
@@ -259,7 +266,7 @@ specialKeyUpHandler :: SpecialKey -> World -> World
 specialKeyUpHandler k = over keysPressed (Map.delete k) . playerKeyHandler k
 
 specialKeyDownHandler :: SpecialKey -> World -> World
-specialKeyDownHandler k = over keysPressed (Map.insert k (PressedKeyState 0.0)) . playerKeyHandler k
+specialKeyDownHandler k = over keysPressed (Map.insert k (PressedKeyState 0.0))
 
 spaceKeyHandler :: World -> World
 spaceKeyHandler w@(World s ps p st@(WorldStatus p' s') t _ _) =
@@ -279,7 +286,7 @@ worldEventHandler (EventKey (SpecialKey c) Down _ _) w = return $ specialKeyDown
 worldEventHandler e w = print e >> return w
 
 produce :: Float -> Float -> [Float]
-produce x1 x2 = concat $ unfoldr (\x -> if x < x2 then Just ([x - 0.01, x + 0.01], x + 1) else Nothing) (fromIntegral $ floor x1 + 1)
+produce x1 x2 = concat $ unfoldr (\x -> if x <= x2 then Just ([x - 0.01, x + 0.01], x + 1) else Nothing) (fromIntegral $ floor x1)
 
 animationSpeed :: Float
 animationSpeed = 10
@@ -292,7 +299,7 @@ iterateProjectile f s (Projectile (x0, y0) (vx, vy) t) =
       y1 = y0 + dy
       p = Projectile (x1, y1) (vx, vy - 10 * animationSpeed * f) t
       xs = produce (min x0 x1) (max x0 x1)
-      ys = (\x -> (x - x0) / dx * dy + y0) <$> xs
+      ys = (\x -> if dx < 0.01 then y0 else (x - x0) / dx * dy + y0) <$> xs
       hs = (\x -> snd $ putOn s (x, 0)) <$> xs
       collision = (\(x, y, _) -> (x, y)) <$> find (\(_, y, h) -> y < h) (zip3 xs ys hs)
    in (collision, p)
@@ -302,11 +309,9 @@ nextPlayerMove w@(World _ _ _ (WorldStatus t _) _ _ _) = set status (WorldStatus
 
 worldTickHandler :: Float -> World -> IO World
 worldTickHandler df w@(World _ _ _ (WorldStatus _ WSS_PLAYER_INPUT) _ _ ks) = do
-  let
-    keyPressedTickHandler f k (PressedKeyState t) = (if ((t + df) / 0.2) > (t / 0.2) then playerKeyHandler k . f else f, PressedKeyState (t + df))
-    (c, ks') = Map.mapAccumRWithKey keyPressedTickHandler id ks
+  let keyPressedTickHandler f k (PressedKeyState t) = (if t > 0.1 && (t + df) / 0.2 > t / 0.2 then playerKeyHandler k . f else f, PressedKeyState (t + df))
+      (c, ks') = Map.mapAccumRWithKey keyPressedTickHandler id ks
   return $ set keysPressed ks' . c $ w
-
 worldTickHandler f w@(World s _ (Just p) (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _ _) =
   let (c, p') = iterateProjectile f s p
    in return $ case c of
@@ -333,10 +338,10 @@ main = do
   let mx = 1000 :: Int
       my = 1000 :: Int
       windowSize = (mx, my)
-      transformer = transformPicture (-fromIntegral mx / 2, -fromIntegral my / 2)
+      transformer = transformPicture (-fromIntegral mx / 2,-fromIntegral my / 2)
       surface = Surface my mx $ Map.fromSet (sinSurface mx my) (Set.fromList $ take (mx + 1) [0 ..])
       player1 = Player (PlayerObject (putOn surface (250, 0)) red) (PlayerControls (wrap 160) (wrap 50))
-      player2 = Player (PlayerObject (putOn surface (750, 0)) blue) (PlayerControls (wrap ((90 - 75) + 90)) (wrap 50))
+      player2 = Player (PlayerObject (putOn surface (750, 0)) blue) (PlayerControls (wrap (90 - 75 + 90)) (wrap 50))
       world :: World = World surface (Map.fromList [(1, player1), (2, player2)]) Nothing (WorldStatus 1 WSS_PLAYER_INPUT) transformer Nothing Map.empty
 
   print surface
