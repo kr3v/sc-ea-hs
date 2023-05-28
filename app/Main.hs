@@ -53,7 +53,7 @@ instance BoundedPlus Angle where
 
 instance BoundedPlus Strength where
   bound :: Strength -> Int
-  bound _ = 100
+  bound _ = 200
   unwrap :: Strength -> Int
   unwrap (Strength a) = a
   wrap :: Int -> Strength
@@ -190,14 +190,12 @@ instance Renderable PlayerObject where
 
 instance Renderable Player where
   render :: Player -> Picture
-  render (Player o@(PlayerObject (x,y) _) (PlayerControls a s)) =
-    let
-      z x y = color (greyN 0.5) $ translate x y $ circleSolid 2
-      a' = fromIntegral (unwrap a) * pi / 180
-      step = 10
-      ps = foldr (<>) (render o) $ (\i -> z (x + i * step * cos a') (y + i * step * sin a')) . fromIntegral <$> [1..(unwrap s `div` round step)]
-    in ps
-
+  render (Player o@(PlayerObject (x, y) _) (PlayerControls a s)) =
+    let z x y = color (greyN 0.5) $ translate x y $ circleSolid 2
+        a' = fromIntegral (unwrap a) * pi / 180
+        step = 10
+        ps = foldr (<>) (render o) $ (\i -> z (x + i * step * cos a') (y + i * step * sin a')) . fromIntegral <$> [1 .. (unwrap s `div` round step)]
+     in ps
 
 instance TextualInfo Player where
   info :: Player -> String
@@ -213,11 +211,11 @@ instance Renderable Explosion where
 
 ---
 
-transformPicture :: Vector -> Picture -> Picture
-transformPicture (dx, dy) = translate dx dy
+putOn :: Surface -> Point -> Maybe Point
+putOn (Surface mh mw hs) (x, y) = (x,) . fromIntegral <$> Map.lookup (round x) hs
 
-putOn :: Surface -> Point -> Point
-putOn (Surface mh mw hs) (x, y) = (x, fromIntegral $ hs Map.! round x)
+putOn' :: Surface -> Point -> Point
+putOn' (Surface mh mw hs) (x, y) = (x,) . fromIntegral $ hs Map.! round x
 
 intersectionPoints ::
   Point -> -- center of the circle
@@ -239,37 +237,40 @@ sinSurface mx my x =
       my' = fromIntegral my :: Float
       x'_norm = x' / mx'
       x'_norm_2pi = x'_norm * 2 * pi
-      h_var0 = sin x'_norm_2pi * (my' / 40)
-      h_var1 = sin (x'_norm_2pi * 2) * (my' / 80)
-      h_var2 = sin (x'_norm_2pi * 4) * (my' / 160)
-      h_var3 = sin (x'_norm_2pi * 8) * (my' / 320)
-      h_var4 = sin (x'_norm_2pi * 16) * (my' / 640)
+      h_var0 = sin x'_norm_2pi * (my' / 4)
+      h_var1 = sin (x'_norm_2pi * 2) * (my' / 8)
+      h_var2 = sin (x'_norm_2pi * 4) * (my' / 16)
+      h_var3 = sin (x'_norm_2pi * 8) * (my' / 32)
+      h_var4 = sin (x'_norm_2pi * 16) * (my' / 64)
       h = round (h_var0 + h_var1 + h_var2 + h_var3 + h_var4 + my' / 3)
    in h
+
+isWithinSurface :: Surface -> Float -> Bool
+isWithinSurface (Surface mh mw hs) x = x >= 0 && x <= fromIntegral mw
 
 ---
 
 modify :: BoundedPlus b => Lens' PlayerControls b -> Int -> Player -> Player
 modify a d = over (controls . a) (<+> d)
 
-playerKeyHandler' :: SpecialKey -> Player -> Player
-playerKeyHandler' KeyLeft = modify angle 1
-playerKeyHandler' KeyRight = modify angle (-1)
-playerKeyHandler' KeyDown = modify str (-1)
-playerKeyHandler' KeyUp = modify str 1
-playerKeyHandler' _ = id
+playerControlsModify' :: SpecialKey -> Player -> Player
+playerControlsModify' KeyLeft = modify angle 1
+playerControlsModify' KeyRight = modify angle (-1)
+playerControlsModify' KeyDown = modify str (-1)
+playerControlsModify' KeyUp = modify str 1
+playerControlsModify' _ = id
 
-playerKeyHandler :: SpecialKey -> World -> World
-playerKeyHandler c w = over players (Map.update (Just . playerKeyHandler' c) (view (status . turn) w)) w
+playerControlsModify :: SpecialKey -> World -> World
+playerControlsModify c w = over players (Map.update (Just . playerControlsModify' c) (view (status . turn) w)) w
 
 specialKeyUpHandler :: SpecialKey -> World -> World
-specialKeyUpHandler k = over keysPressed (Map.delete k) . playerKeyHandler k
+specialKeyUpHandler k = over keysPressed (Map.delete k) . playerControlsModify k
 
 specialKeyDownHandler :: SpecialKey -> World -> World
 specialKeyDownHandler k = over keysPressed (Map.insert k (PressedKeyState 0.0))
 
-spaceKeyHandler :: World -> World
-spaceKeyHandler w@(World s ps p st@(WorldStatus p' s') t _ _) =
+projectileLaunch :: World -> World
+projectileLaunch w@(World s ps p st@(WorldStatus p' s') t _ _) =
   let Player (PlayerObject pos c) (PlayerControls a s) = ps Map.! p'
       s' :: Float = fromIntegral (unwrap s)
       a' :: Float = fromIntegral (unwrap a) * pi / 180
@@ -278,12 +279,12 @@ spaceKeyHandler w@(World s ps p st@(WorldStatus p' s') t _ _) =
       proj = Projectile pos (vx, vy) SHELL
    in set (status . state) WSS_TURN_IN_PROGRESS . set projectile (Just proj) . set keysPressed Map.empty $ w
 
-worldEventHandler :: Event -> World -> IO World
-worldEventHandler _ w@(World _ _ _ (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _ _) = return w
-worldEventHandler (EventKey (SpecialKey KeySpace) Up _ _) w = return $ spaceKeyHandler w
-worldEventHandler (EventKey (SpecialKey c) Up _ _) w = return $ specialKeyUpHandler c w
-worldEventHandler (EventKey (SpecialKey c) Down _ _) w = return $ specialKeyDownHandler c w
-worldEventHandler e w = print e >> return w
+eventHandler :: Event -> World -> IO World
+eventHandler _ w@(World _ _ _ (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _ _) = return w
+eventHandler (EventKey (SpecialKey KeySpace) Up _ _) w = return $ projectileLaunch w
+eventHandler (EventKey (SpecialKey c) Up _ _) w = return $ specialKeyUpHandler c w
+eventHandler (EventKey (SpecialKey c) Down _ _) w = return $ specialKeyDownHandler c w
+eventHandler e w = print e >> return w
 
 produce :: Float -> Float -> [Float]
 produce x1 x2 = concat $ unfoldr (\x -> if x <= x2 then Just ([x - 0.01, x + 0.01], x + 1) else Nothing) (fromIntegral $ floor x1)
@@ -291,57 +292,58 @@ produce x1 x2 = concat $ unfoldr (\x -> if x <= x2 then Just ([x - 0.01, x + 0.0
 animationSpeed :: Float
 animationSpeed = 10
 
-iterateProjectile :: Float -> Surface -> Projectile -> (Maybe Point, Projectile)
-iterateProjectile f s (Projectile (x0, y0) (vx, vy) t) =
+projectileTick :: Float -> Surface -> Projectile -> (Maybe Point, Maybe Projectile)
+projectileTick f s (Projectile (x0, y0) (vx, vy) t) =
   let dx = vx * animationSpeed * f
       dy = vy * animationSpeed * f
       x1 = x0 + dx
       y1 = y0 + dy
       p = Projectile (x1, y1) (vx, vy - 10 * animationSpeed * f) t
-      xs = produce (min x0 x1) (max x0 x1)
+      xs = filter (isWithinSurface s) $ produce (min x0 x1) (max x0 x1)
       ys = (\x -> if dx < 0.01 then y0 else (x - x0) / dx * dy + y0) <$> xs
-      hs = (\x -> snd $ putOn s (x, 0)) <$> xs
+      hs = (\x -> snd $ putOn' s (x, 0)) <$> xs
       collision = (\(x, y, _) -> (x, y)) <$> find (\(_, y, h) -> y < h) (zip3 xs ys hs)
-   in (collision, p)
+   in (collision, if isWithinSurface s x1 then Just p else Nothing)
 
 nextPlayerMove :: World -> World
 nextPlayerMove w@(World _ _ _ (WorldStatus t _) _ _ _) = set status (WorldStatus (if t == 1 then 2 else 1) WSS_PLAYER_INPUT) w
 
-worldTickHandler :: Float -> World -> IO World
-worldTickHandler df w@(World _ _ _ (WorldStatus _ WSS_PLAYER_INPUT) _ _ ks) = do
-  let keyPressedTickHandler f k (PressedKeyState t) = (if t > 0.1 && (t + df) / 0.2 > t / 0.2 then playerKeyHandler k . f else f, PressedKeyState (t + df))
+tick :: Float -> World -> IO World
+tick df w@(World _ _ _ (WorldStatus _ WSS_PLAYER_INPUT) _ _ ks) = do
+  let keyPressedTickHandler f k (PressedKeyState t) = (if t > 0.1 && (t + df) / 0.2 > t / 0.2 then playerControlsModify k . f else f, PressedKeyState (t + df))
       (c, ks') = Map.mapAccumRWithKey keyPressedTickHandler id ks
   return $ set keysPressed ks' . c $ w
-worldTickHandler f w@(World s _ (Just p) (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _ _) =
-  let (c, p') = iterateProjectile f s p
+tick f w@(World s _ (Just p) (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _ _) =
+  let (c, p') = projectileTick f s p
    in return $ case c of
         Just c' -> set projectile Nothing . set explosion (Just $ Explosion c' 0 10) $ w
-        Nothing -> set projectile (Just p') w
-worldTickHandler f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ (Just (Explosion (x, y) r mr)) ks)
+        Nothing -> set projectile p' w
+tick f w@(World s _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ (Just (Explosion (x, y) r mr)) ks)
   | r < mr = return $ over (explosion . _Just . radius) ((f * animationSpeed) +) w
   | otherwise =
-      let xs = [x - mr .. x + mr]
-          hs = (\x -> snd $ putOn (w ^. surface) (x, 0)) <$> xs
+      let xs = filter (isWithinSurface s) [x - mr .. x + mr]
+          hs = (\x -> snd $ putOn' (view surface w) (x, 0)) <$> xs
+
           decide h x' ((x1, y1), (x2, y2))
             | y2 < h = h - (y2 - y1)
             | y1 < h = y1
             | otherwise = h
-          decide' (a, b, c) = (b, decide a b c)
-          z = Map.fromList (bimap round round <$> (decide' <$> catMaybes (zipWith (\h x' -> (h,x',) <$> intersectionPoints (x, y) mr x') hs xs)))
-       in return $ over (surface . heights) (Map.union z) . set explosion Nothing $ w
-worldTickHandler f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ Nothing _) = return $ nextPlayerMove w
+          decide' (h, x, i12) = (x, max (decide h x i12) 5)
 
--- bugs: angle=90 does not work
+          z = Map.fromList (bimap round round <$> (decide' <$> catMaybes (zipWith (\h x' -> (h,x',) <$> intersectionPoints (x, y) mr x') hs xs)))
+
+       in return $ over (surface . heights) (Map.union z) . set explosion Nothing $ w
+tick f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ Nothing _) = return $ nextPlayerMove w
 
 main :: IO ()
 main = do
   let mx = 1000 :: Int
       my = 1000 :: Int
       windowSize = (mx, my)
-      transformer = transformPicture (-fromIntegral mx / 2,-fromIntegral my / 2)
+      transformer = translate (-fromIntegral mx / 2) (-fromIntegral my / 2)
       surface = Surface my mx $ Map.fromSet (sinSurface mx my) (Set.fromList $ take (mx + 1) [0 ..])
-      player1 = Player (PlayerObject (putOn surface (250, 0)) red) (PlayerControls (wrap 160) (wrap 50))
-      player2 = Player (PlayerObject (putOn surface (750, 0)) blue) (PlayerControls (wrap (90 - 75 + 90)) (wrap 50))
+      player1 = Player (PlayerObject (putOn' surface (250, 0)) red) (PlayerControls (wrap 160) (wrap 50))
+      player2 = Player (PlayerObject (putOn' surface (750, 0)) blue) (PlayerControls (wrap (90 - 75 + 90)) (wrap 50))
       world :: World = World surface (Map.fromList [(1, player1), (2, player2)]) Nothing (WorldStatus 1 WSS_PLAYER_INPUT) transformer Nothing Map.empty
 
   print surface
@@ -352,5 +354,5 @@ main = do
     60
     world
     (return . render)
-    worldEventHandler
-    worldTickHandler
+    eventHandler
+    tick
