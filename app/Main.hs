@@ -250,6 +250,11 @@ isWithinSurface (Surface mh mw hs) x = x >= 0 && x <= fromIntegral mw
 
 ---
 
+nextPlayerMove :: World -> World
+nextPlayerMove w@(World _ _ _ (WorldStatus t _) _ _ _) = set status (WorldStatus (if t == 1 then 2 else 1) WSS_PLAYER_INPUT) w
+
+---
+
 modify :: BoundedPlus b => Lens' PlayerControls b -> Int -> Player -> Player
 modify a d = over (controls . a) (<+> d)
 
@@ -305,8 +310,19 @@ projectileTick f s (Projectile (x0, y0) (vx, vy) t) =
       collision = (\(x, y, _) -> (x, y)) <$> find (\(_, y, h) -> y < h) (zip3 xs ys hs)
    in (collision, if isWithinSurface s x1 then Just p else Nothing)
 
-nextPlayerMove :: World -> World
-nextPlayerMove w@(World _ _ _ (WorldStatus t _) _ _ _) = set status (WorldStatus (if t == 1 then 2 else 1) WSS_PLAYER_INPUT) w
+explosionUpdateSurface :: Surface -> Explosion -> Surface
+explosionUpdateSurface s (Explosion e@(x, y) r mr) =
+  let xs = filter (isWithinSurface s) [x - mr .. x + mr]
+      hs = (\x -> snd $ putOn' s (x, 0)) <$> xs
+
+      decide h x' ((x1, y1), (x2, y2))
+        | y2 < h = h - (y2 - y1)
+        | y1 < h = y1
+        | otherwise = h
+      decide' (h, x, i12) = (x, max (decide h x i12) 5)
+
+      z = Map.fromList (bimap round round <$> (decide' <$> catMaybes (zipWith (\h x -> (h,x,) <$> intersectionPoints e mr x) hs xs)))
+  in over heights (Map.union z) s
 
 tick :: Float -> World -> IO World
 tick df w@(World _ _ _ (WorldStatus _ WSS_PLAYER_INPUT) _ _ ks) = do
@@ -318,21 +334,10 @@ tick f w@(World s _ (Just p) (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _ _) =
    in return $ case c of
         Just c' -> set projectile Nothing . set explosion (Just $ Explosion c' 0 10) $ w
         Nothing -> set projectile p' w
-tick f w@(World s _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ (Just (Explosion (x, y) r mr)) ks)
+tick f w@(World s _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ (Just e@(Explosion c@(x, y) r mr)) ks)
   | r < mr = return $ over (explosion . _Just . radius) ((f * animationSpeed) +) w
-  | otherwise =
-      let xs = filter (isWithinSurface s) [x - mr .. x + mr]
-          hs = (\x -> snd $ putOn' (view surface w) (x, 0)) <$> xs
+  | otherwise = return $ over surface (`explosionUpdateSurface` e) . set explosion Nothing $ w
 
-          decide h x' ((x1, y1), (x2, y2))
-            | y2 < h = h - (y2 - y1)
-            | y1 < h = y1
-            | otherwise = h
-          decide' (h, x, i12) = (x, max (decide h x i12) 5)
-
-          z = Map.fromList (bimap round round <$> (decide' <$> catMaybes (zipWith (\h x' -> (h,x',) <$> intersectionPoints (x, y) mr x') hs xs)))
-
-       in return $ over (surface . heights) (Map.union z) . set explosion Nothing $ w
 tick f w@(World _ _ Nothing (WorldStatus _ WSS_TURN_IN_PROGRESS) _ Nothing _) = return $ nextPlayerMove w
 
 main :: IO ()
