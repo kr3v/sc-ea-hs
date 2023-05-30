@@ -42,6 +42,8 @@ executable haskell-db
         , lens ^>= 5.2.2
         , containers ^>= 0.6.7
         , mtl ^>= 2.2.2
+        , random ^>= 1.2.1.1
+        , time ^>= 1.12.2
 
     hs-source-dirs:   app
     default-language: Haskell2010
