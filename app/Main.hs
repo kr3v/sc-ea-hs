@@ -191,7 +191,7 @@ instance Renderable World where
         projectileHitDebugInfo :: ProjectileHit -> Picture
         projectileHitDebugInfo (ProjectileHit _ c p i) = text' 5 0 ("hit #" ++ show i ++ ": " ++ info c) <> translate (-10) 7 p
 
-        projectileHitsDebugInfo = translate (-500) 1000 $ Pictures $ imap (\i ph -> translate 0 (-30 * fromIntegral i) $ projectileHitDebugInfo ph) ph
+        projectileHitsDebugInfo = translate (-450) 1000 $ Pictures $ imap (\i ph -> translate 0 (-30 * fromIntegral i) $ projectileHitDebugInfo ph) ph
      in t $ Pictures [game, debugInfo', projectileHitsDebugInfo, debugInfo']
 
 instance TextualInfo WorldStatus where
@@ -402,9 +402,12 @@ tick f w@(World _ _ Nothing Nothing _ (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _ _
 
 historySymbols :: [Picture]
 historySymbols =
-  [ circle 5,
-    line [(-5, -5), (5, 5)] <> line [(-5, 5), (5, -5)],
-    line [(-5, 0), (5, 0)] <> line [(0, -5), (0, 5)]
+  [ translate (-0.4) (-0.4) $ circle 4,
+    line [(-5, -5), (5, 5)] <> line [(-5, 5), (5, -5)], -- x
+    line [(-5, 0), (5, 0)] <> line [(0, -5), (0, 5)], -- +
+    line [(-5, -5), (-5, 5)] <> line [(5, -5), (5, 5)] <> line [(-5, -5), (5, -5)] <> line [(-5, 5), (5, 5)], -- square
+    line [(-5, 0), (0, 5)] <> line [(0, 5), (5, 0)] <> line [(5, 0), (0, -5)] <> line [(0, -5), (-5, 0)], -- diamond
+    line [(-5, -5), (5, -5)] <> line [(5, -5), (0, 5)] <> line [(0, 5), (-5, -5)] -- triangle
   ]
 
 historyPictures :: [Picture]
