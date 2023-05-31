@@ -26,7 +26,6 @@ import qualified Data.Set as Set
 import Data.Time (secondsToNominalDiffTime)
 import Data.Time.Clock (nominalDiffTimeToSeconds)
 import Data.Time.Clock.POSIX (getPOSIXTime)
-import GHC.RTS.Flags (ProfFlags (doHeapProfile), TraceFlags (traceScheduler))
 import Graphics.Gloss.Data.Color (Color, blue, greyN, orange, red, white)
 import Graphics.Gloss.Data.Display (Display (InWindow))
 import Graphics.Gloss.Data.Picture (Picture (..), blank, circle, color, line, rectangleSolid, rotate, scale, text, translate)
@@ -35,8 +34,10 @@ import Graphics.Gloss.Data.Vector (Vector)
 import Graphics.Gloss.Interface.IO.Game (Event (..), Key (..), KeyState (..), Modifiers, MouseButton (..), SpecialKey (..), black, circleSolid, playIO)
 import Graphics.Gloss.Interface.Pure.Game (play)
 import Numeric (showFFloat)
+import ScEaHs.Utils.BoundedPlus (BoundedPlus (..))
 import System.Random (StdGen, mkStdGen)
 import System.Random.Stateful (Random (randomR), StdGen, newStdGen)
+import Data.Coerce (coerce)
 
 ---
 
@@ -44,29 +45,13 @@ newtype Angle = Angle Int deriving (Show)
 
 newtype Strength = Strength Int deriving (Show)
 
-class BoundedPlus a where
-  bound :: a -> Int
-  unwrap :: a -> Int
-  wrap :: Int -> a
-
-  (<+>) :: a -> Int -> a
-  (<+>) a b = wrap $ (unwrap a + b) `mod` bound a
-
 instance BoundedPlus Angle where
   bound :: Angle -> Int
   bound _ = 360
-  unwrap :: Angle -> Int
-  unwrap (Angle a) = a
-  wrap :: Int -> Angle
-  wrap = Angle
 
 instance BoundedPlus Strength where
   bound :: Strength -> Int
   bound _ = 200
-  unwrap :: Strength -> Int
-  unwrap (Strength a) = a
-  wrap :: Int -> Strength
-  wrap = Strength
 
 ---
 
@@ -413,7 +398,6 @@ weveGotAWinner losers = do
   let z = -1 <$ losers
   score %= Map.unionWith (+) z
 
-
 tick :: Float -> World -> IO World
 tick df w@(World _ _ _ _ _ (WorldStatus _ WSS_PLAYER_INPUT) ks _ _ _ _ _ _)
   | null ks = return w
@@ -456,11 +440,12 @@ historyPictures' = cycle historyPictures
 -- todo: history - change to Map Int ...
 --                 add angle/strength + source position
 --                 compress to two lines
+--       win/lose - beautify score
 
 generateSurface :: Int -> Int -> State StdGen Surface
 generateSurface mx my = do
   offset <- state $ randomR (0, 16384)
-  seed <- state $ randomR (1, 10)
+  seed <- state $ randomR (0.5, 10)
   let g = mapGenerator offset seed mx my
   return $ Surface my mx (Map.fromSet g (Set.fromList $ take (mx + 1) [0 ..]))
 
