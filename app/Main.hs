@@ -38,22 +38,10 @@ import ScEaHs.Utils.BoundedPlus (BoundedPlus (..))
 import System.Random (StdGen, mkStdGen)
 import System.Random.Stateful (Random (randomR), StdGen, newStdGen)
 import Data.Coerce (coerce)
+import ScEaHs.Player.Controls (PlayerControls (..), angle, str)
 
 ---
 
-newtype Angle = Angle Int deriving (Show)
-
-newtype Strength = Strength Int deriving (Show)
-
-instance BoundedPlus Angle where
-  bound :: Angle -> Int
-  bound _ = 360
-
-instance BoundedPlus Strength where
-  bound :: Strength -> Int
-  bound _ = 200
-
----
 
 class Renderable a where
   render :: a -> Picture
@@ -99,11 +87,6 @@ data Surface = Surface
   }
   deriving (Show)
 
-data PlayerControls = PlayerControls
-  { _angle :: Angle,
-    _str :: Strength
-  }
-  deriving (Show)
 
 data PlayerObject = PlayerObject
   { _pos :: Point,
@@ -157,7 +140,6 @@ $(makeLenses ''PressedKeyState)
 $(makeLenses ''World)
 $(makeLenses ''WorldStatus)
 $(makeLenses ''Surface)
-$(makeLenses ''PlayerControls)
 $(makeLenses ''PlayerObject)
 $(makeLenses ''Player)
 $(makeLenses ''Projectile)
