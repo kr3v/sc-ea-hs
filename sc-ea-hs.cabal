@@ -71,5 +71,6 @@ test-suite sc-ea-hs-lib-test
                , sc-ea-hs-lib
                , hspec
                , QuickCheck
+               , gloss ^>= 1.13.2.2
   build-tool-depends: hspec-discover:hspec-discover
   default-language: Haskell2010

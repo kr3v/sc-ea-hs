@@ -39,9 +39,9 @@ import System.Random (StdGen, mkStdGen)
 import System.Random.Stateful (Random (randomR), StdGen, newStdGen)
 import Data.Coerce (coerce)
 import ScEaHs.Player.Controls (PlayerControls (..), angle, str)
+import ScEaHs.Utils.Geometry (intersectionCircleVerticalLine, distance)
 
 ---
-
 
 class Renderable a where
   render :: a -> Picture
@@ -86,7 +86,6 @@ data Surface = Surface
     _heights :: Map.Map Int Int
   }
   deriving (Show)
-
 
 data PlayerObject = PlayerObject
   { _pos :: Point,
@@ -219,22 +218,6 @@ putOn (Surface mh mw hs) (x, y) = (x,) . fromIntegral <$> Map.lookup (round x) h
 putOn' :: Surface -> Point -> Point
 putOn' (Surface mh mw hs) (x, y) = (x,) . fromIntegral $ hs Map.! round x
 
-intersectionCircleVerticalLine ::
-  Point -> -- center of the circle
-  Float -> -- radius of the circle
-  Float -> -- x coordinate of vertical line
-  Maybe (Point, Point) -- intersection points
-intersectionCircleVerticalLine (x0, y0) r x
-  | discriminant < 0 = Nothing
-  | otherwise = Just ((x, y1), (x, y2))
-  where
-    discriminant = r ^ 2 - (x - x0) ^ 2
-    y1 = y0 - sqrt discriminant
-    y2 = y0 + sqrt discriminant
-
-distance :: Point -> Point -> Float
-distance (x0, y0) (x, y) = sqrt $ (x - x0) ^ 2 + (y - y0) ^ 2
-
 mapGenerator :: Int -> Float -> Int -> Int -> Int -> Int
 mapGenerator offset seed mx my x =
   let x' = fromIntegral (x + offset) :: Float
@@ -355,14 +338,14 @@ explosionAddToHistory' = do
   projectilesHistory %= (ph :)
 
 -- todo: consider higher d hp / consider extending explosion radius
-explosionCheckPlayerHit' :: World -> Player -> Player
-explosionCheckPlayerHit' (World _ _ _ (Just (Explosion c _ mr)) _ _ _ _ _ _ _ _ _) p =
+explosionCheckPlayerHit' :: Explosion -> Player -> Player
+explosionCheckPlayerHit' (Explosion c _ mr) p =
   let d = distance c $ view (object . pos) p
       hp_delta = if d > mr then 0 else (1 - d / mr) * 2 * 100
    in over health (flip (-) hp_delta) p
 
 explosionCheckPlayerHit :: World -> World
-explosionCheckPlayerHit w = over (players . each) (explosionCheckPlayerHit' w) w
+explosionCheckPlayerHit w = over (players . each) (explosionCheckPlayerHit' (fromJust $ view explosion w)) w
 
 -- todo: consider removing hp for falling down
 putPlayersOnSurface :: State World ()
