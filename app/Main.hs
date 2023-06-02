@@ -9,7 +9,7 @@
 
 module Main where
 
-import Control.Lens (At (at), Bifunctor (bimap), Each (each), Lens', makeLenses, non, over, set, use, view, (%%=), (%%~), (%=), (%~), (&), (.=), (.~), (<%=), (<.=), (<<%=), (^.))
+import Control.Lens (At (at), Bifunctor (bimap), Each (each), Lens', makeLenses, non, over, set, use, view, (%%=), (%%~), (%=), (%~), (&), (.=), (.~), (<%=), (<.=), (<<%=), (^.), Zoom (zoom))
 import Control.Lens.Lens (Lens', (&), (<<%~))
 import Control.Lens.Prism (_Just)
 import Control.Monad (liftM2)
@@ -40,6 +40,8 @@ import System.Random.Stateful (Random (randomR), StdGen, newStdGen)
 import Data.Coerce (coerce)
 import ScEaHs.Player.Controls (PlayerControls (..), angle, str)
 import ScEaHs.Utils.Geometry (intersectionCircleVerticalLine, distance)
+import ScEaHs.Game.Surface (Surface (..), putOn, putOn', isWithinSurface, heights)
+import ScEaHs.Game.Surface.Generator (SurfaceWithGenerator (SurfaceWithGenerator), generateSurface, surface, updateSurface, surfaceWithGenerator)
 
 ---
 
@@ -65,7 +67,7 @@ newtype PressedKeyState = PressedKeyState
   deriving (Show)
 
 data World = World
-  { _surface :: Surface,
+  { _surfaceG :: SurfaceWithGenerator,
     _players :: Map.Map Int Player,
     _projectile :: Maybe Projectile,
     _explosion :: Maybe Explosion,
@@ -75,17 +77,8 @@ data World = World
     _transformer :: Picture -> Picture,
     _projectileHitPictures :: [Picture],
     _projectileHitPicturesIdx :: Int,
-    _surfaceStdGen :: StdGen,
-    _surfaceState :: StdGen -> (Surface, StdGen),
     _score :: Map.Map Int Int
   }
-
-data Surface = Surface
-  { _maxHeight :: Int,
-    _width :: Int,
-    _heights :: Map.Map Int Int
-  }
-  deriving (Show)
 
 data PlayerObject = PlayerObject
   { _pos :: Point,
@@ -138,7 +131,6 @@ instance Show Explosion where
 $(makeLenses ''PressedKeyState)
 $(makeLenses ''World)
 $(makeLenses ''WorldStatus)
-$(makeLenses ''Surface)
 $(makeLenses ''PlayerObject)
 $(makeLenses ''Player)
 $(makeLenses ''Projectile)
@@ -149,7 +141,7 @@ $(makeLenses ''ProjectileHit)
 
 instance Renderable World where
   render :: World -> Picture
-  render w@(World s ps p ea ph st@(WorldStatus p' s') _ t _ _ _ _ sc) =
+  render w@(World (SurfaceWithGenerator s _ _) ps p ea ph st@(WorldStatus p' s') _ t _ _ sc) =
     let surface = render s
         projectile = render <$> maybeToList p
         explosion = maybeToList $ render <$> ea
@@ -212,30 +204,6 @@ instance Renderable ProjectileHit where
 
 ---
 
-putOn :: Surface -> Point -> Maybe Point
-putOn (Surface mh mw hs) (x, y) = (x,) . fromIntegral <$> Map.lookup (round x) hs
-
-putOn' :: Surface -> Point -> Point
-putOn' (Surface mh mw hs) (x, y) = (x,) . fromIntegral $ hs Map.! round x
-
-mapGenerator :: Int -> Float -> Int -> Int -> Int -> Int
-mapGenerator offset seed mx my x =
-  let x' = fromIntegral (x + offset) :: Float
-      mx' = fromIntegral mx :: Float
-      my' = fromIntegral my :: Float
-      x'_norm = x' / mx'
-      x'_norm_2pi = x'_norm * 2 * pi
-      h_var0 = sin x'_norm_2pi * (my' / (4 * seed))
-      h_var1 = cos (x'_norm_2pi * 2) * (my' / (8 * seed))
-      h_var2 = sin (x'_norm_2pi * 4) * (my' / (16 * seed))
-      h_var3 = cos (x'_norm_2pi * 8) * (my' / (32 * seed))
-      h_var4 = sin (x'_norm_2pi * 16) * (my' / (64 * seed))
-      h = round (h_var0 + h_var1 + h_var2 + h_var3 + h_var4 + my' / 3)
-   in h
-
-isWithinSurface :: Surface -> Float -> Bool
-isWithinSurface (Surface mh mw hs) x = x >= 0 && x <= fromIntegral mw
-
 ---
 
 nextPlayerMove :: State World ()
@@ -283,7 +251,7 @@ projectileLaunch = do
   keysPressed .= Map.empty
 
 eventHandler :: Event -> World -> IO World
-eventHandler _ w@(World _ _ _ _ _ (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _ _ _ _ _ _) = return w
+eventHandler _ w@(World _ _ _ _ _ (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _ _ _ _) = return w
 eventHandler (EventKey (SpecialKey KeySpace) Up _ _) w = return $ execState projectileLaunch w
 eventHandler (EventKey (SpecialKey c) Up _ _) w = return $ specialKeyUpHandler c w
 eventHandler (EventKey (SpecialKey c) Down _ _) w = return $ specialKeyDownHandler c w
@@ -350,12 +318,12 @@ explosionCheckPlayerHit w = over (players . each) (explosionCheckPlayerHit' (fro
 -- todo: consider removing hp for falling down
 putPlayersOnSurface :: State World ()
 putPlayersOnSurface = do
-  s <- use surface
+  s <- use $ surfaceG . surface 
   players . each . object . pos %= putOn' s
 
 weveGotAWinner :: Map.Map Int Player -> State World ()
 weveGotAWinner losers = do
-  updateSurface
+  zoom surfaceG updateSurface
   nextPlayerMove
   putPlayersOnSurface
   players . each . health .= 100
@@ -364,21 +332,21 @@ weveGotAWinner losers = do
   score %= Map.unionWith (+) z
 
 tick :: Float -> World -> IO World
-tick df w@(World _ _ _ _ _ (WorldStatus _ WSS_PLAYER_INPUT) ks _ _ _ _ _ _)
+tick df w@(World _ _ _ _ _ (WorldStatus _ WSS_PLAYER_INPUT) ks _ _ _ _)
   | null ks = return w
   | otherwise =
       let keyPressedTickHandler f k (PressedKeyState t) = (if t > 0.1 && (t + df) / 0.2 > t / 0.2 then playerControlsModify k . f else f, PressedKeyState (t + df))
           (c, ks') = Map.mapAccumRWithKey keyPressedTickHandler id ks
        in return $ set keysPressed ks' . c $ w
-tick f w@(World s _ (Just p) _ _ (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _ _ _ _ _ _) =
+tick f w@(World (SurfaceWithGenerator s _ _) _ (Just p) _ _ (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _ _ _ _) =
   let (c, p') = projectileTick f s p
    in return $ case c of
         Just c' -> set projectile Nothing . set explosion (Just $ Explosion c' 0 10) $ w
         Nothing -> set projectile p' w
-tick f w@(World s _ Nothing (Just e@(Explosion c@(x, y) r mr)) _ (WorldStatus _ WSS_TURN_IN_PROGRESS) ks _ _ _ _ _ _)
+tick f w@(World s _ Nothing (Just e@(Explosion c@(x, y) r mr)) _ (WorldStatus _ WSS_TURN_IN_PROGRESS) ks _ _ _ _)
   | r < mr = return $ over (explosion . _Just . radius) ((f * animationSpeed) +) w
-  | otherwise = return $ set explosion Nothing . execState putPlayersOnSurface . over surface (`explosionUpdateSurface` e) . explosionCheckPlayerHit . explosionAddToHistory $ w
-tick f w@(World _ ps Nothing Nothing _ (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _ _ _ _ _ _) = do
+  | otherwise = return $ set explosion Nothing . execState putPlayersOnSurface . over (surfaceG . surface) (`explosionUpdateSurface` e) . explosionCheckPlayerHit . explosionAddToHistory $ w
+tick f w@(World _ ps Nothing Nothing _ (WorldStatus _ WSS_TURN_IN_PROGRESS) _ _ _ _ _) = do
   let ps' = Map.filter ((<= 0) . view health) ps
    in if Map.null ps'
         then return $ execState nextPlayerMove w
@@ -407,19 +375,6 @@ historyPictures' = cycle historyPictures
 --                 compress to two lines
 --       win/lose - beautify score
 
-generateSurface :: Int -> Int -> State StdGen Surface
-generateSurface mx my = do
-  offset <- state $ randomR (0, 16384)
-  seed <- state $ randomR (0.5, 10)
-  let g = mapGenerator offset seed mx my
-  return $ Surface my mx (Map.fromSet g (Set.fromList $ take (mx + 1) [0 ..]))
-
-updateSurface :: State World ()
-updateSurface = do
-  s <- use surfaceState
-  s' <- surfaceStdGen %%= s
-  surface .= s'
-
 main :: IO ()
 main = do
   w <- getPOSIXTime
@@ -429,15 +384,16 @@ main = do
       my = 1000 :: Int
       windowSize = (mx, my)
       transformer = translate (-fromIntegral mx / 2) (-fromIntegral my / 2)
-      surfaceGenerator = runState $ generateSurface mx my
-      (surface, w') = surfaceGenerator g
-      player1 = Player (PlayerObject (putOn' surface (250, 0)) red) (PlayerControls (wrap 60) (wrap 50)) 100
-      player2 = Player (PlayerObject (putOn' surface (750, 0)) blue) (PlayerControls (wrap (180 - 60)) (wrap 50)) 100
+      sfg = surfaceWithGenerator g (runState $ generateSurface mx my)
+      sf = view surface sfg
+
+      player1 = Player (PlayerObject (putOn' sf (250, 0)) red) (PlayerControls (wrap 60) (wrap 50)) 100
+      player2 = Player (PlayerObject (putOn' sf (750, 0)) blue) (PlayerControls (wrap (180 - 60)) (wrap 50)) 100
       players = Map.fromList [(1, player1), (2, player2)]
-      world :: World = World surface players Nothing Nothing [] (WorldStatus 1 WSS_PLAYER_INPUT) Map.empty transformer historyPictures' 1 w' surfaceGenerator (0 <$ players)
+      world :: World = World sfg players Nothing Nothing [] (WorldStatus 1 WSS_PLAYER_INPUT) Map.empty transformer historyPictures' 1 (0 <$ players)
 
   print $ length historyPictures
-  print surface
+  print sf
 
   playIO
     (InWindow "GameEvent" windowSize (10, 10))

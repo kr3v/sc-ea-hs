@@ -1,4 +1,4 @@
-module ScEaHs.Utils.Geometry (intersectionCircleVerticalLine, distance) where
+module ScEaHs.Utils.Geometry where
 
 import Graphics.Gloss (Point)
 

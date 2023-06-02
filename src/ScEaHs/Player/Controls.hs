@@ -1,7 +1,7 @@
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module ScEaHs.Player.Controls (Angle (..), Strength (..), PlayerControls (..), angle, str) where
+module ScEaHs.Player.Controls where
 
 import Control.Lens (makeLenses)
 import Graphics.Gloss.Interface.IO.Game (SpecialKey (..))

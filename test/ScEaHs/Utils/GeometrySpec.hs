@@ -1,6 +1,4 @@
-{-# LANGUAGE TypeApplications #-}
-
-module ScEaHs.Utils.GeometrySpec (spec) where
+module ScEaHs.Utils.GeometrySpec where
 
 import Data.Proxy (Proxy (Proxy))
 import Graphics.Gloss (Point)
