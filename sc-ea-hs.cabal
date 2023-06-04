@@ -41,11 +41,41 @@ executable sc-ea-hs
         , time ^>= 1.12.2
         , sc-ea-hs-lib
 
-    hs-source-dirs:   app
+    hs-source-dirs:   app/game
+    default-language: Haskell2010
+
+executable sc-ea-hs_map-generator
+    main-is:          Main.hs
+
+    build-depends:
+        base ^>=4.16.4.0
+        , aeson ^>= 2.1.2.1
+        , bytestring ^>= 0.11.4.0
+        , gloss ^>= 1.13.2.2
+        , ilist ^>= 0.4.0.1
+        , lens ^>= 5.2.2
+        , containers ^>= 0.6.7
+        , mtl ^>= 2.2.2
+        , random ^>= 1.2.1.1
+        , time ^>= 1.12.2
+        , sc-ea-hs-lib
+
+    hs-source-dirs:   app/map-generator
     default-language: Haskell2010
 
 library sc-ea-hs-lib
-    exposed-modules:  ScEaHs.Utils.BoundedPlus, ScEaHs.Player.Controls, ScEaHs.Game.Surface, ScEaHs.Utils.Geometry, ScEaHs.Game.Surface.Generator
+    exposed-modules:
+        ScEaHs.Game.Surface
+        , ScEaHs.Game.Surface.Generator
+        , ScEaHs.Game.World
+        , ScEaHs.Game.Projectile
+        , ScEaHs.Utils.BoundedPlus
+        , ScEaHs.Utils.Format
+        , ScEaHs.Utils.Geometry
+        , ScEaHs.GUI.Player
+        , ScEaHs.GUI.Player.Controls
+        , ScEaHs.GUI.Render
+        , ScEaHs.GUI.World
 
     build-depends:
         base ^>=4.16.4.0
@@ -72,5 +102,13 @@ test-suite sc-ea-hs-lib-test
                , hspec
                , QuickCheck
                , gloss ^>= 1.13.2.2
+               , aeson ^>= 2.1.2.1
+               , bytestring ^>= 0.11.4.0
+               , ilist ^>= 0.4.0.1
+               , lens ^>= 5.2.2
+               , containers ^>= 0.6.7
+               , mtl ^>= 2.2.2
+               , random ^>= 1.2.1.1
+               , time ^>= 1.12.2
   build-tool-depends: hspec-discover:hspec-discover
   default-language: Haskell2010
