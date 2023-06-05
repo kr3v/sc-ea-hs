@@ -1,10 +1,7 @@
 -- suggestion to copilot: I'm writing a scorched earth game
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 
 module Main where
@@ -38,18 +35,18 @@ import Numeric (showFFloat)
 import ScEaHs.GUI.Player (controls, object)
 import qualified ScEaHs.GUI.Player as GUI
 import ScEaHs.GUI.Player.Controls (PlayerControls (..), angle, str)
-import ScEaHs.GUI.World (PressedKeyState (..), ProjectileHit (..), currentPlayer, hits, keysPressed, pictures, picturesIdx, projectileHistory, world, ProjectileHistory (..))
+import ScEaHs.GUI.Render (Renderable (..))
+import ScEaHs.GUI.World (PressedKeyState (..), ProjectileHistory (..), ProjectileHit (..), currentPlayer, hits, keysPressed, pictures, picturesIdx, projectileHistory, world)
 import qualified ScEaHs.GUI.World as GUI
 import ScEaHs.Game.Projectile (Projectile (..), ProjectileType (..))
 import ScEaHs.Game.Surface (Surface (..), heights, isWithinSurface, putOn, putOn')
 import ScEaHs.Game.Surface.Generator (SurfaceWithGenerator (SurfaceWithGenerator, _surface), generateSurface, surface, surfaceWithGenerator, updateSurface)
-import ScEaHs.Game.World (Explosion (..), SStatus (..), epos, explosion, health, players, pos, projectile, score, status, surfaceG, turn, wstatus, _explosion, _status, radius)
+import ScEaHs.Game.World (Explosion (..), SStatus (..), epos, explosion, health, players, pos, projectile, radius, score, status, surfaceG, turn, wstatus, _explosion, _status)
 import qualified ScEaHs.Game.World as Game
 import ScEaHs.Utils.BoundedPlus (BoundedPlus (..))
 import ScEaHs.Utils.Geometry (distance, intersectionCircleVerticalLine)
 import System.Random (StdGen, mkStdGen)
 import System.Random.Stateful (Random (randomR), StdGen, newStdGen)
-import ScEaHs.GUI.Render (Renderable(..))
 
 nextPlayerMove :: State Game.Status ()
 nextPlayerMove = do
@@ -136,11 +133,8 @@ explosionUpdateSurface (Explosion e@(x, y) r mr) s =
 uncons' :: [a] -> (a, [a])
 uncons' = fromJust . uncons
 
-explosionAddToHistory :: GUI.World -> GUI.World
-explosionAddToHistory = execState explosionAddToHistory'
-
-explosionAddToHistory' :: State GUI.World ()
-explosionAddToHistory' = do
+explosionAddToHistory :: State GUI.World ()
+explosionAddToHistory = do
   hs <- projectileHistory . pictures %%= uncons'
   idx <- projectileHistory . picturesIdx <<%= (+ 1)
   (GUI.Player (Game.Player _ pc _) c) <- gets $ fromJust . currentPlayer
@@ -164,40 +158,54 @@ putPlayersOnSurface = do
   s <- use $ surfaceG . surface
   players . each . pos %= putOn' s
 
-weveGotAWinner :: Map.Map Int GUI.Player -> State GUI.World ()
+weveGotAWinner :: Map.Map Int Game.Player -> State Game.World ()
 weveGotAWinner losers = do
-  zoom (world . surfaceG) updateSurface
-  zoom (world . status) nextPlayerMove
-  zoom world putPlayersOnSurface
-  world . players . each . health .= 100
-  projectileHistory . hits .= []
-  let z = -1 <$ losers
-  world . score %= Map.unionWith (+) z
+  zoom surfaceG updateSurface
+  zoom status nextPlayerMove
+  putPlayersOnSurface
+  players . each . health .= 100
+  score %= Map.unionWith (+) (-1 <$ losers)
 
--- tick :: Float -> Game.World -> Game.World
+losers :: Game.World -> Map.Map Int Game.Player
+losers w = Map.filter ((<= 0) . view health) $ view players w
 
+tick1 :: Float -> Game.World -> Game.World
+tick1 df w@(Game.World {_surfaceG = SurfaceWithGenerator {_surface = s}, _projectile = (Just p), _status = Game.Status {_wstatus = WSS_TURN_IN_PROGRESS}}) =
+  let (c, p') = projectileTick df s p
+   in case c of
+        Just c' -> set projectile Nothing . set explosion (Just $ Explosion c' 0 10) $ w
+        Nothing -> set projectile p' w
+tick1 df w@(Game.World {_surfaceG = SurfaceWithGenerator {_surface = s}, _explosion = Just e@(Explosion c@(x, y) r mr), _status = Game.Status {_wstatus = WSS_TURN_IN_PROGRESS}})
+  | r < mr = over (explosion . _Just . radius) ((df * animationSpeed) +) w
+  | otherwise = set explosion Nothing . execState putPlayersOnSurface . over (surfaceG . surface) (explosionUpdateSurface e) . explosionCheckPlayerHit $ w
+tick1 df w@(Game.World {_players = players, _explosion = Nothing, _projectile = Nothing, _status = Game.Status {_wstatus = WSS_TURN_IN_PROGRESS}}) =
+  let ls = losers w
+   in if not $ Map.null ls
+        then execState (weveGotAWinner ls) w
+        else w
+tick1 df w = w
 
-tick :: Float -> GUI.World -> IO GUI.World
-tick df w@(GUI.World {_world = Game.World {_status = Game.Status {_wstatus = WSS_PLAYER_INPUT}}, _keysPressed = ks})
-  | null ks = return w
+tick21 :: Float -> GUI.World -> GUI.World
+tick21 df w@(GUI.World {_world = Game.World {_status = Game.Status {_wstatus = WSS_PLAYER_INPUT}}, _keysPressed = ks})
+  | null ks = w
   | otherwise =
       let keyPressedTickHandler f k (PressedKeyState t) = (if t > 0.1 && (t + df) / 0.2 > t / 0.2 then playerControlsModify k . f else f, PressedKeyState (t + df))
           (c, ks') = Map.mapAccumRWithKey keyPressedTickHandler id ks
-       in return $ set keysPressed ks' . c $ w
-tick df w@(GUI.World {_world = Game.World {_surfaceG = SurfaceWithGenerator {_surface = s}, _projectile = (Just p), _status = Game.Status {_wstatus = WSS_TURN_IN_PROGRESS}}}) =
-  let (c, p') = projectileTick df s p
-   in return $ case c of
-        Just c' -> set (world . projectile) Nothing . set (world . explosion) (Just $ Explosion c' 0 10) $ w
-        Nothing -> set (world . projectile) p' w
-tick df w@(GUI.World {_world = Game.World {_surfaceG = SurfaceWithGenerator {_surface = s}, _explosion = Just e@(Explosion c@(x, y) r mr), _status = Game.Status {_wstatus = WSS_TURN_IN_PROGRESS}}})
-  | r < mr = return $ over (world . explosion . _Just . radius) ((df * animationSpeed) +) w
-  | otherwise = return $ set (world . explosion) Nothing . execState (zoom world putPlayersOnSurface) . over (world . surfaceG . surface) (explosionUpdateSurface e) . over world explosionCheckPlayerHit . explosionAddToHistory $ w
-tick df w@(GUI.World {}) = do
-  let ps = GUI.players w
-      ps' = Map.filter ((<= 0) . view (object . health)) ps
-   in if Map.null ps'
-        then return $ over (world . status) (execState nextPlayerMove) w
-        else return $ execState (weveGotAWinner ps') w
+       in set keysPressed ks' . c $ w
+tick21 df w@(GUI.World {_world = Game.World {_surfaceG = SurfaceWithGenerator {_surface = s}, _explosion = Just e@(Explosion c@(x, y) r mr), _status = Game.Status {_wstatus = WSS_TURN_IN_PROGRESS}}})
+  | r >= mr = execState explosionAddToHistory w
+tick21 df w@(GUI.World {_world = w'@Game.World {_players = players, _explosion = Nothing, _projectile = Nothing, _status = Game.Status {_wstatus = WSS_TURN_IN_PROGRESS}}}) =
+  let ls = losers w'
+   in if Map.null ls
+        then over (world . status) (execState nextPlayerMove) w
+        else set (projectileHistory . hits) [] w
+tick21 df w = w
+
+tick22 :: Float -> GUI.World -> GUI.World
+tick22 df w = w
+
+tick :: Float -> GUI.World -> GUI.World
+tick df w = tick22 df $ over world (tick1 df) $ tick21 df w
 
 ---
 
@@ -240,8 +248,8 @@ main = do
       player2Controls = PlayerControls (wrap (180 - 60)) (wrap 50)
       players = Map.fromList [(1, player1), (2, player2)]
 
-      world_game :: Game.World = Game.World {_surfaceG = sfg, Game._players = players, _projectile= Nothing, _explosion = Nothing, _status = Game.Status 1 WSS_PLAYER_INPUT, _score = Map.empty}
-      world :: GUI.World = GUI.World {_world = world_game, _playersControls = Map.fromList [(1, player1Controls), (2, player2Controls)], _projectileHistory = ProjectileHistory{_hits = [], _pictures = historyPictures', _picturesIdx = 0}, _transformer = transformer, _keysPressed = Map.empty}
+      world_game :: Game.World = Game.World {_surfaceG = sfg, Game._players = players, _projectile = Nothing, _explosion = Nothing, _status = Game.Status 1 WSS_PLAYER_INPUT, _score = Map.empty}
+      world :: GUI.World = GUI.World {_world = world_game, _playersControls = Map.fromList [(1, player1Controls), (2, player2Controls)], _projectileHistory = ProjectileHistory {_hits = [], _pictures = historyPictures', _picturesIdx = 0}, _transformer = transformer, _keysPressed = Map.empty}
 
   print $ length historyPictures
   print sf
@@ -253,4 +261,4 @@ main = do
     world
     (return . render)
     eventHandler
-    tick
+    (\df w -> return $ tick df w)
