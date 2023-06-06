@@ -113,7 +113,7 @@ projectileTick f s (Projectile (x0, y0) (vx, vy) t) =
       xs = filter (isWithinSurface s) $ produce (min x0 x1) (max x0 x1)
       ys = (\x -> if dx < 0.01 then y0 else (x - x0) / dx * dy + y0) <$> xs
       hs = (\x -> snd $ putOn' s (x, 0)) <$> xs
-      collision = (\(x, y, _) -> (x, y)) <$> find (\(_, y, h) -> y < h) (zip3 xs ys hs)
+      collision = (\(x, _, h) -> (x, h)) <$> find (\(_, y, h) -> y < h) (zip3 xs ys hs)
    in (collision, if isWithinSurface s x1 then Just p else Nothing)
 
 explosionUpdateSurface :: Explosion -> Surface -> Surface
