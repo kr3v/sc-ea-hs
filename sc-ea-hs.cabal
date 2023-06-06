@@ -75,6 +75,7 @@ library sc-ea-hs-lib
         , ScEaHs.GUI.Player
         , ScEaHs.GUI.Player.Controls
         , ScEaHs.GUI.Render
+        , ScEaHs.GUI.Render.Symbols
         , ScEaHs.GUI.World
 
     build-depends:

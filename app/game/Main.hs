@@ -36,6 +36,7 @@ import ScEaHs.GUI.Player (controls, object)
 import qualified ScEaHs.GUI.Player as GUI
 import ScEaHs.GUI.Player.Controls (PlayerControls (..), angle, str)
 import ScEaHs.GUI.Render (Renderable (..))
+import qualified ScEaHs.GUI.Render.Symbols
 import ScEaHs.GUI.World (PressedKeyState (..), ProjectileHistory (..), ProjectileHit (..), currentPlayer, hits, keysPressed, pictures, picturesIdx, projectileHistory, world)
 import qualified ScEaHs.GUI.World as GUI
 import ScEaHs.Game.Projectile (Projectile (..), ProjectileType (..))
@@ -47,6 +48,7 @@ import ScEaHs.Utils.BoundedPlus (BoundedPlus (..))
 import ScEaHs.Utils.Geometry (distance, intersectionCircleVerticalLine)
 import System.Random (StdGen, mkStdGen)
 import System.Random.Stateful (Random (randomR), StdGen, newStdGen)
+import qualified ScEaHs.GUI.Render.Symbols as Symbols
 
 nextPlayerMove :: State Game.Status ()
 nextPlayerMove = do
@@ -103,13 +105,16 @@ produce x1 x2 = concat $ unfoldr (\x -> if x <= x2 then Just ([x - 0.01, x + 0.0
 animationSpeed :: Float
 animationSpeed = 10
 
+gravityForce :: Float
+gravityForce = 10
+
 projectileTick :: Float -> Surface -> Projectile -> (Maybe Point, Maybe Projectile)
-projectileTick f s (Projectile (x0, y0) (vx, vy) t) =
-  let dx = vx * animationSpeed * f
-      dy = vy * animationSpeed * f
+projectileTick df s (Projectile (x0, y0) (vx, vy) t) =
+  let dx = vx * animationSpeed * df
+      dy = vy * animationSpeed * df
       x1 = x0 + dx
       y1 = y0 + dy
-      p = Projectile (x1, y1) (vx, vy - 10 * animationSpeed * f) t
+      p = Projectile (x1, y1) (vx, vy - gravityForce * animationSpeed * df) t
       xs = filter (isWithinSurface s) $ produce (min x0 x1) (max x0 x1)
       ys = (\x -> if dx < 0.01 then y0 else (x - x0) / dx * dy + y0) <$> xs
       hs = (\x -> snd $ putOn' s (x, 0)) <$> xs
@@ -189,7 +194,7 @@ tick21 :: Float -> GUI.World -> GUI.World
 tick21 df w@(GUI.World {_world = Game.World {_status = Game.Status {_wstatus = WSS_PLAYER_INPUT}}, _keysPressed = ks})
   | null ks = w
   | otherwise =
-      let keyPressedTickHandler f k (PressedKeyState t) = (if t > 0.1 && (t + df) / 0.2 > t / 0.2 then playerControlsModify k . f else f, PressedKeyState (t + df))
+      let keyPressedTickHandler df k (PressedKeyState t) = (if t > 0.1 && (t + df) / 0.2 > t / 0.2 then playerControlsModify k . df else df, PressedKeyState (t + df))
           (c, ks') = Map.mapAccumRWithKey keyPressedTickHandler id ks
        in set keysPressed ks' . c $ w
 tick21 df w@(GUI.World {_world = Game.World {_surfaceG = SurfaceWithGenerator {_surface = s}, _explosion = Just e@(Explosion c@(x, y) r mr), _status = Game.Status {_wstatus = WSS_TURN_IN_PROGRESS}}})
@@ -208,22 +213,6 @@ tick :: Float -> GUI.World -> GUI.World
 tick df w = tick22 df $ over world (tick1 df) $ tick21 df w
 
 ---
-
-historySymbols :: [Picture]
-historySymbols =
-  [ translate (-0.4) (-0.4) $ circle 4,
-    line [(-5, -5), (5, 5)] <> line [(-5, 5), (5, -5)], -- x
-    line [(-5, 0), (5, 0)] <> line [(0, -5), (0, 5)], -- +
-    line [(-5, -5), (-5, 5)] <> line [(5, -5), (5, 5)] <> line [(-5, -5), (5, -5)] <> line [(-5, 5), (5, 5)], -- square
-    line [(-5, 0), (0, 5)] <> line [(0, 5), (5, 0)] <> line [(5, 0), (0, -5)] <> line [(0, -5), (-5, 0)], -- diamond
-    line [(-5, -5), (5, -5)] <> line [(5, -5), (0, 5)] <> line [(0, 5), (-5, -5)] -- triangle
-  ]
-
-historyPictures :: [Picture]
-historyPictures = Pictures <$> filter (liftM2 (&&) (> 0) (<= 2) . length) (subsequences historySymbols)
-
-historyPictures' :: [Picture]
-historyPictures' = cycle historyPictures
 
 -- todo: history - change to Map Int ...
 --                 add angle/strength + source position
@@ -248,10 +237,9 @@ main = do
       player2Controls = PlayerControls (wrap (180 - 60)) (wrap 50)
       players = Map.fromList [(1, player1), (2, player2)]
 
-      world_game :: Game.World = Game.World {_surfaceG = sfg, Game._players = players, _projectile = Nothing, _explosion = Nothing, _status = Game.Status 1 WSS_PLAYER_INPUT, _score = Map.empty}
-      world :: GUI.World = GUI.World {_world = world_game, _playersControls = Map.fromList [(1, player1Controls), (2, player2Controls)], _projectileHistory = ProjectileHistory {_hits = [], _pictures = historyPictures', _picturesIdx = 0}, _transformer = transformer, _keysPressed = Map.empty}
+  let world_game :: Game.World = Game.World {_surfaceG = sfg, Game._players = players, _projectile = Nothing, _explosion = Nothing, _status = Game.Status 1 WSS_PLAYER_INPUT, _score = Map.empty}
+      world :: GUI.World = GUI.World {_world = world_game, _playersControls = Map.fromList [(1, player1Controls), (2, player2Controls)], _projectileHistory = ProjectileHistory {_hits = [], _pictures = Symbols.pictures, _picturesIdx = 0}, _transformer = transformer, _keysPressed = Map.empty}
 
-  print $ length historyPictures
   print sf
 
   playIO
