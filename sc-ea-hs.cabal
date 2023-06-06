@@ -65,13 +65,16 @@ executable sc-ea-hs_map-generator
 
 library sc-ea-hs-lib
     exposed-modules:
-        ScEaHs.Game.Surface
+        ScEaHs.Game
+        , ScEaHs.Game.Surface
         , ScEaHs.Game.Surface.Generator
         , ScEaHs.Game.World
         , ScEaHs.Game.Projectile
         , ScEaHs.Utils.BoundedPlus
         , ScEaHs.Utils.Format
         , ScEaHs.Utils.Geometry
+        , ScEaHs.Utils.List
+        , ScEaHs.GUI.Game
         , ScEaHs.GUI.Player
         , ScEaHs.GUI.Player.Controls
         , ScEaHs.GUI.Render

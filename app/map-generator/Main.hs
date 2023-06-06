@@ -1,13 +1,14 @@
 module Main where
+
+import Control.Lens (over, view)
+import Control.Monad.State (execState, runState)
 import Data.Time.Clock.POSIX (getPOSIXTime)
-import System.Random (mkStdGen)
-import Graphics.Gloss.Data.Picture (translate)
-import ScEaHs.Game.Surface.Generator (surfaceWithGenerator, generateSurface, surface, SurfaceWithGenerator, updateSurface)
-import Control.Monad.State (runState, execState)
-import Control.Lens (view, over)
-import Graphics.Gloss.Interface.IO.Game (playIO, Display (..), SpecialKey, Event (EventKey), Key (..), MouseButton (..), KeyState (..))
 import Graphics.Gloss.Data.Color (white)
-import ScEaHs.GUI.Render (Renderable(..))
+import Graphics.Gloss.Data.Picture (translate)
+import Graphics.Gloss.Interface.IO.Game (Display (..), Event (EventKey), Key (..), KeyState (..), MouseButton (..), SpecialKey, playIO)
+import ScEaHs.GUI.Render (Renderable (..))
+import ScEaHs.Game.Surface.Generator (SurfaceWithGenerator, generateSurface, surface, surfaceWithGenerator, updateSurface)
+import System.Random (mkStdGen)
 
 eventHandler :: Event -> SurfaceWithGenerator -> IO SurfaceWithGenerator
 eventHandler (EventKey (MouseButton LeftButton) Up _ _) s = return $ execState updateSurface s
@@ -32,4 +33,4 @@ main = do
     sfg
     (return . transformer . render . view surface)
     eventHandler
-    (\ _ w -> return w)
+    (\_ w -> return w)

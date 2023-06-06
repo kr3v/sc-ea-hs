@@ -2,95 +2,36 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 
 module Main where
 
-import Control.Lens (At (at), Bifunctor (bimap), Each (each), Lens', Zoom (zoom), makeLenses, non, over, set, use, view, (%%=), (%%~), (%=), (%~), (&), (.=), (.~), (<%=), (<.=), (<<%=), (^.))
-import Control.Lens.Lens (Lens', (&), (<<%~))
-import Control.Lens.Prism (_Just)
-import Control.Monad (liftM2)
-import Control.Monad.State (MonadState (get, put), State, execState, gets, modify, runState, state)
-import Data.Coerce (coerce)
-import Data.Fixed ()
-import Data.Foldable (find)
-import Data.Functor ((<&>))
-import Data.IORef (newIORef)
-import Data.List (subsequences, uncons, unfoldr)
-import Data.List.Index (imap)
+import Control.Lens (over, view)
+import Control.Monad.State (execState, runState)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (catMaybes, fromJust, maybeToList)
-import qualified Data.Set as Set
-import Data.Time (secondsToNominalDiffTime)
-import Data.Time.Clock (nominalDiffTimeToSeconds)
 import Data.Time.Clock.POSIX (getPOSIXTime)
-import Graphics.Gloss.Data.Color (Color, blue, greyN, orange, red, white)
-import Graphics.Gloss.Data.Display (Display (InWindow))
-import Graphics.Gloss.Data.Picture (Picture (..), blank, circle, color, line, rectangleSolid, rotate, scale, text, translate)
-import Graphics.Gloss.Data.Point (Point)
-import Graphics.Gloss.Data.Vector (Vector)
-import Graphics.Gloss.Interface.IO.Game (Event (..), Key (..), KeyState (..), Modifiers, MouseButton (..), SpecialKey (..), black, circleSolid, playIO)
-import Graphics.Gloss.Interface.Pure.Game (play)
-import Numeric (showFFloat)
-import ScEaHs.GUI.Player (controls, object)
-import qualified ScEaHs.GUI.Player as GUI
-import ScEaHs.GUI.Player.Controls (PlayerControls (..), angle, str)
+import Graphics.Gloss (Display (..), blue, red, translate, white)
+import Graphics.Gloss.Interface.IO.Game (Event (..), Key (..), KeyState (..), SpecialKey (..), playIO)
+import ScEaHs.GUI.Game (playerControlsModify, projectileLaunch, tick21, tick22)
+import ScEaHs.GUI.Player.Controls (PlayerControls (..))
 import ScEaHs.GUI.Render (Renderable (..))
-import qualified ScEaHs.GUI.Render.Symbols
-import ScEaHs.GUI.World (PressedKeyState (..), ProjectileHistory (..), ProjectileHit (..), currentPlayer, hits, keysPressed, pictures, picturesIdx, projectileHistory, world)
+import qualified ScEaHs.GUI.Render.Symbols as Symbols
+import ScEaHs.GUI.World (PressedKeyState (..), ProjectileHistory (..), keysPressed, world)
 import qualified ScEaHs.GUI.World as GUI
-import ScEaHs.Game.Projectile (Projectile (..), ProjectileType (..))
-import ScEaHs.Game.Surface (Surface (..), heights, isWithinSurface, putOn, putOn')
-import ScEaHs.Game.Surface.Generator (SurfaceWithGenerator (SurfaceWithGenerator, _surface), generateSurface, surface, surfaceWithGenerator, updateSurface)
-import ScEaHs.Game.World (Explosion (..), SStatus (..), epos, explosion, health, players, pos, projectile, radius, score, status, surfaceG, turn, wstatus, _explosion, _status)
+import ScEaHs.Game (tick1)
+import ScEaHs.Game.Surface (putOn')
+import ScEaHs.Game.Surface.Generator (generateSurface, surface, surfaceWithGenerator)
+import ScEaHs.Game.World (SStatus (..))
 import qualified ScEaHs.Game.World as Game
 import ScEaHs.Utils.BoundedPlus (BoundedPlus (..))
-import ScEaHs.Utils.Geometry (distance, intersectionCircleVerticalLine)
-import System.Random (StdGen, mkStdGen)
-import System.Random.Stateful (Random (randomR), StdGen, newStdGen)
-import qualified ScEaHs.GUI.Render.Symbols as Symbols
-
-nextPlayerMove :: State Game.Status ()
-nextPlayerMove = do
-  t <- use turn
-  turn .= if t == 1 then 2 else 1
-  wstatus .= WSS_PLAYER_INPUT
+import System.Random (mkStdGen)
 
 ---
-
-playerControlsModify'' :: BoundedPlus b => Lens' PlayerControls b -> Int -> PlayerControls -> PlayerControls
-playerControlsModify'' a d = over a (<+> d)
-
-playerControlsModify' :: SpecialKey -> PlayerControls -> PlayerControls
-playerControlsModify' KeyLeft = playerControlsModify'' angle 1
-playerControlsModify' KeyRight = playerControlsModify'' angle (-1)
-playerControlsModify' KeyDown = playerControlsModify'' str (-1)
-playerControlsModify' KeyUp = playerControlsModify'' str 1
-playerControlsModify' _ = id
-
-playerControlsModify :: SpecialKey -> GUI.World -> GUI.World
-playerControlsModify c w = over GUI.playersControls (Map.update (Just . playerControlsModify' c) (view (world . status . turn) w)) w
 
 specialKeyUpHandler :: SpecialKey -> GUI.World -> GUI.World
 specialKeyUpHandler k = over keysPressed (Map.delete k) . playerControlsModify k
 
 specialKeyDownHandler :: SpecialKey -> GUI.World -> GUI.World
 specialKeyDownHandler k = over keysPressed (Map.insert k (PressedKeyState 0.0))
-
-projectileLaunch' :: GUI.Player -> Projectile
-projectileLaunch' (GUI.Player (Game.Player (x0, y0) c _) (PlayerControls a s)) =
-  let s' :: Float = fromIntegral (unwrap s)
-      a' :: Float = fromIntegral (unwrap a) * pi / 180
-      vx = s' * cos a'
-      vy = s' * sin a'
-   in Projectile (x0, y0 + 5) (vx, vy) SHELL
-
-projectileLaunch :: State GUI.World ()
-projectileLaunch = do
-  p <- gets $ fromJust . currentPlayer
-  world . status . wstatus .= WSS_TURN_IN_PROGRESS
-  world . projectile .= Just (projectileLaunch' p)
-  keysPressed .= Map.empty
 
 eventHandler :: Event -> GUI.World -> IO GUI.World
 eventHandler _ w@(GUI.World {_world = Game.World {_status = Game.Status {_wstatus = WSS_TURN_IN_PROGRESS}}}) = return w
@@ -99,120 +40,8 @@ eventHandler (EventKey (SpecialKey c) Up _ _) w = return $ specialKeyUpHandler c
 eventHandler (EventKey (SpecialKey c) Down _ _) w = return $ specialKeyDownHandler c w
 eventHandler e w = print e >> return w
 
-produce :: Float -> Float -> [Float]
-produce x1 x2 = concat $ unfoldr (\x -> if x <= x2 then Just ([x - 0.01, x + 0.01], x + 1) else Nothing) (fromIntegral $ floor x1)
-
-animationSpeed :: Float
-animationSpeed = 10
-
-gravityForce :: Float
-gravityForce = 10
-
-projectileTick :: Float -> Surface -> Projectile -> (Maybe Point, Maybe Projectile)
-projectileTick df s (Projectile (x0, y0) (vx, vy) t) =
-  let dx = vx * animationSpeed * df
-      dy = vy * animationSpeed * df
-      x1 = x0 + dx
-      y1 = y0 + dy
-      p = Projectile (x1, y1) (vx, vy - gravityForce * animationSpeed * df) t
-      xs = filter (isWithinSurface s) $ produce (min x0 x1) (max x0 x1)
-      ys = (\x -> if dx < 0.01 then y0 else (x - x0) / dx * dy + y0) <$> xs
-      hs = (\x -> snd $ putOn' s (x, 0)) <$> xs
-      collision = (\(x, _, h) -> (x, h)) <$> find (\(_, y, h) -> y < h) (zip3 xs ys hs)
-   in (collision, if isWithinSurface s x1 then Just p else Nothing)
-
-explosionUpdateSurface :: Explosion -> Surface -> Surface
-explosionUpdateSurface (Explosion e@(x, y) r mr) s =
-  let xs = filter (isWithinSurface s) [x - mr .. x + mr]
-      hs = (\x -> snd $ putOn' s (x, 0)) <$> xs
-
-      decide h x' ((x1, y1), (x2, y2))
-        | y2 < h = h - (y2 - y1)
-        | y1 < h = y1
-        | otherwise = h
-      decide' (h, x, i12) = (x, max (decide h x i12) 5)
-
-      z = Map.fromList (bimap round round <$> (decide' <$> catMaybes (zipWith (\h x -> (h,x,) <$> intersectionCircleVerticalLine e mr x) hs xs)))
-   in over heights (Map.union z) s
-
-uncons' :: [a] -> (a, [a])
-uncons' = fromJust . uncons
-
-explosionAddToHistory :: State GUI.World ()
-explosionAddToHistory = do
-  hs <- projectileHistory . pictures %%= uncons'
-  idx <- projectileHistory . picturesIdx <<%= (+ 1)
-  (GUI.Player (Game.Player _ pc _) c) <- gets $ fromJust . currentPlayer
-  e <- gets $ fromJust . view (world . explosion)
-  let ph = ProjectileHit (e ^. epos) c (color pc hs) idx
-  projectileHistory . hits %= (ph :)
-
--- todo: consider higher d hp / consider extending explosion radius
-explosionCheckPlayerHit' :: Explosion -> Game.Player -> Game.Player
-explosionCheckPlayerHit' (Explosion c _ mr) p =
-  let d = distance c $ view pos p
-      hp_delta = if d > mr then 0 else (1 - d / mr) * 2 * 100
-   in over health (flip (-) hp_delta) p
-
-explosionCheckPlayerHit :: Game.World -> Game.World
-explosionCheckPlayerHit w = over (players . each) (explosionCheckPlayerHit' (fromJust $ view explosion w)) w
-
--- todo: consider removing hp for falling down
-putPlayersOnSurface :: State Game.World ()
-putPlayersOnSurface = do
-  s <- use $ surfaceG . surface
-  players . each . pos %= putOn' s
-
-weveGotAWinner :: Map.Map Int Game.Player -> State Game.World ()
-weveGotAWinner losers = do
-  zoom surfaceG updateSurface
-  zoom status nextPlayerMove
-  putPlayersOnSurface
-  players . each . health .= 100
-  score %= Map.unionWith (+) (-1 <$ losers)
-
-losers :: Game.World -> Map.Map Int Game.Player
-losers w = Map.filter ((<= 0) . view health) $ view players w
-
-tick1 :: Float -> Game.World -> Game.World
-tick1 df w@(Game.World {_surfaceG = SurfaceWithGenerator {_surface = s}, _projectile = (Just p), _status = Game.Status {_wstatus = WSS_TURN_IN_PROGRESS}}) =
-  let (c, p') = projectileTick df s p
-   in case c of
-        Just c' -> set projectile Nothing . set explosion (Just $ Explosion c' 0 10) $ w
-        Nothing -> set projectile p' w
-tick1 df w@(Game.World {_surfaceG = SurfaceWithGenerator {_surface = s}, _explosion = Just e@(Explosion c@(x, y) r mr), _status = Game.Status {_wstatus = WSS_TURN_IN_PROGRESS}})
-  | r < mr = over (explosion . _Just . radius) ((df * animationSpeed) +) w
-  | otherwise = set explosion Nothing . execState putPlayersOnSurface . over (surfaceG . surface) (explosionUpdateSurface e) . explosionCheckPlayerHit $ w
-tick1 df w@(Game.World {_players = players, _explosion = Nothing, _projectile = Nothing, _status = Game.Status {_wstatus = WSS_TURN_IN_PROGRESS}}) =
-  let ls = losers w
-   in if not $ Map.null ls
-        then execState (weveGotAWinner ls) w
-        else w
-tick1 df w = w
-
-tick21 :: Float -> GUI.World -> GUI.World
-tick21 df w@(GUI.World {_world = Game.World {_status = Game.Status {_wstatus = WSS_PLAYER_INPUT}}, _keysPressed = ks})
-  | null ks = w
-  | otherwise =
-      let keyPressedTickHandler df k (PressedKeyState t) = (if t > 0.1 && (t + df) / 0.2 > t / 0.2 then playerControlsModify k . df else df, PressedKeyState (t + df))
-          (c, ks') = Map.mapAccumRWithKey keyPressedTickHandler id ks
-       in set keysPressed ks' . c $ w
-tick21 df w@(GUI.World {_world = Game.World {_surfaceG = SurfaceWithGenerator {_surface = s}, _explosion = Just e@(Explosion c@(x, y) r mr), _status = Game.Status {_wstatus = WSS_TURN_IN_PROGRESS}}})
-  | r >= mr = execState explosionAddToHistory w
-tick21 df w@(GUI.World {_world = w'@Game.World {_players = players, _explosion = Nothing, _projectile = Nothing, _status = Game.Status {_wstatus = WSS_TURN_IN_PROGRESS}}}) =
-  let ls = losers w'
-   in if Map.null ls
-        then over (world . status) (execState nextPlayerMove) w
-        else set (projectileHistory . hits) [] w
-tick21 df w = w
-
-tick22 :: Float -> GUI.World -> GUI.World
-tick22 df w = w
-
 tick :: Float -> GUI.World -> GUI.World
 tick df w = tick22 df $ over world (tick1 df) $ tick21 df w
-
----
 
 -- todo: history - change to Map Int ...
 --                 add angle/strength + source position
