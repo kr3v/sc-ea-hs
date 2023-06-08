@@ -1,5 +1,6 @@
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module ScEaHs.Game.World where
 
@@ -13,6 +14,7 @@ import Numeric (showFFloat)
 import ScEaHs.Game.Projectile (Projectile)
 import ScEaHs.Game.Surface.Generator (SurfaceWithGenerator)
 import ScEaHs.Utils.Format (showF2, showTF2)
+import GHC.Generics (Generic)
 
 data SStatus = WSS_PLAYER_INPUT | WSS_TURN_IN_PROGRESS deriving (Show, Eq)
 
@@ -29,10 +31,17 @@ data Player = Player
   }
   deriving (Show)
 
+data ExplosionSource = ExplosionSource
+  { _espos :: Point,
+    _esvel :: Vector,
+    _escontrols :: (Float, Float)
+  }
+
 data Explosion = Explosion
   { _epos :: Point,
     _radius :: Float,
-    _maxRadius :: Float
+    _maxRadius :: Float,
+    _src :: ExplosionSource
   }
 
 data World = World
@@ -43,15 +52,17 @@ data World = World
     _status :: Status,
     _score :: Map.Map Int Int
   }
+  deriving (Generic)
 
 instance Show Explosion where
   show :: Explosion -> String
-  show (Explosion p r mr) = "Explosion " ++ showTF2 p ++ " " ++ showF2 r ++ " " ++ showF2 mr
+  show (Explosion p r mr _) = "Explosion " ++ showTF2 p ++ " " ++ showF2 r ++ " " ++ showF2 mr
 
 $(makeLenses ''Player)
 $(makeLenses ''World)
 $(makeLenses ''Status)
 $(makeLenses ''Explosion)
+$(makeLenses ''ExplosionSource)
 
 player :: World -> Int -> Maybe Player
 player w idx = w ^. players . at idx

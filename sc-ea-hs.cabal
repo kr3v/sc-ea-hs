@@ -66,6 +66,7 @@ executable sc-ea-hs_map-generator
 library sc-ea-hs-lib
     exposed-modules:
         ScEaHs.Game
+        , ScEaHs.Plugin
         , ScEaHs.Game.Surface
         , ScEaHs.Game.Surface.Generator
         , ScEaHs.Game.World
@@ -74,12 +75,9 @@ library sc-ea-hs-lib
         , ScEaHs.Utils.Format
         , ScEaHs.Utils.Geometry
         , ScEaHs.Utils.List
-        , ScEaHs.GUI.Game
-        , ScEaHs.GUI.Player
-        , ScEaHs.GUI.Player.Controls
         , ScEaHs.GUI.Render
-        , ScEaHs.GUI.Render.Symbols
-        , ScEaHs.GUI.World
+        , ScEaHs.GUI.Plugins.History
+        , ScEaHs.GUI.Plugins.Controls
 
     build-depends:
         base ^>=4.16.4.0
@@ -92,6 +90,9 @@ library sc-ea-hs-lib
         , mtl ^>= 2.2.2
         , random ^>= 1.2.1.1
         , time ^>= 1.12.2
+        , multistate ^>= 0.8.0.4
+        , data-has ^>= 0.4.0.0
+        , generic-lens ^>= 2.2.2.0
 
     hs-source-dirs:   src
     default-language: Haskell2010
