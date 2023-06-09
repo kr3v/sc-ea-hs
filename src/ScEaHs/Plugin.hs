@@ -17,7 +17,9 @@ import Graphics.Gloss (Picture)
 import Graphics.Gloss.Interface.IO.Game (Event)
 import qualified ScEaHs.Game.World as Game
 
-type GamePluginState a s = (GamePlugin a, HasType a s, HasType Game.World s) => State s ()
+type GamePluginStateR a s r = (GamePlugin a, HasType a s, HasType Game.World s) => State s r
+
+type GamePluginState a s = GamePluginStateR a s ()
 
 class GamePlugin a where
   event :: Game.World -> a -> Event -> GamePluginState a s

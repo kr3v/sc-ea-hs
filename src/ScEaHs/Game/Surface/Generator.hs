@@ -22,8 +22,6 @@ surfaceWithGenerator stdGen state = do
 
 $(makeLenses ''SurfaceWithGenerator)
 
--- as tests:
--- 2. a separate main function to generate maps + button on the main game to regenerate the map
 mapGenerator :: Int -> Float -> Int -> Int -> Int -> Int
 mapGenerator offset seed mx my x =
   let x' = fromIntegral (x + offset) :: Float

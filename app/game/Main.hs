@@ -11,7 +11,7 @@
 module Main where
 
 import Control.Lens (makeLenses, over, view, (%=), (&), (.~), (^.))
-import Control.Monad.State (MonadState (..), State, execState, modify, runState)
+import Control.Monad.State (MonadState (..), State, execState, modify, runState, evalState)
 import Data.Data (Proxy (..))
 import qualified Data.Map.Strict as Map
 import Data.Time.Clock.POSIX (getPOSIXTime)
@@ -19,8 +19,8 @@ import GHC.Generics (Generic)
 import Graphics.Gloss (Display (..), Picture (..), blue, red, translate, white)
 import Graphics.Gloss.Interface.IO.Game (Event (..), Key (..), KeyState (..), SpecialKey (..), playIO)
 import ScEaHs.GUI.Plugins.Controls (ControlsPlugin (..), PlayerControls (..))
-import ScEaHs.GUI.Plugins.History (HistoryPlugin (..), ProjectileHistory (..))
-import ScEaHs.GUI.Render (Renderable (..))
+import ScEaHs.GUI.Plugins.History (HistoryPlugin (..), ProjectileHistory (..), symbolsPictures)
+import ScEaHs.GUI.Render (Renderable (..), RenderableS (..))
 import ScEaHs.Game (tick1)
 import ScEaHs.Game.Surface (putOn')
 import ScEaHs.Game.Surface.Generator (generateSurface, surface, surfaceWithGenerator)
@@ -53,6 +53,9 @@ event e = do
   eventP (Proxy @HistoryPlugin) e
   eventP (Proxy @ControlsPlugin) e
 
+renderW :: World -> Picture
+renderW w = Pictures [render $ w ^. world, render $ w ^. history, evalState (renderS (w ^. controls)) w]
+
 -- todo: history - change to Map Int ...
 --                 add angle/strength + source position
 --                 compress to two lines
@@ -77,8 +80,7 @@ main = do
       players = Map.fromList [(1, player1), (2, player2)]
 
   let world_game :: Game.World = Game.World {_surfaceG = sfg, Game._players = players, _projectile = Nothing, _explosion = Nothing, _status = Game.Status 1 WSS_PLAYER_INPUT, _score = Map.empty}
-      -- _playersControls = Map.fromList [(1, player1Controls), (2, player2Controls)], _projectileHistory = ProjectileHistory {_hits = [], _pictures = Symbols.pictures, _picturesIdx = 0}, _transformer = transformer, _keysPressed = Map.empty
-      history = HistoryPlugin {_history = ProjectileHistory {_hits = [], _pictures = [], _picturesIdx = 0}}
+      history = HistoryPlugin {_history = ProjectileHistory {_hits = [], _pictures = symbolsPictures, _picturesIdx = 0}}
       controls = ControlsPlugin {_playersControls = Map.fromList [(1, player1Controls), (2, player2Controls)], _keysPressed = Map.empty}
       world :: World = World {_world = world_game, _history = history, _controls = controls}
 
@@ -89,6 +91,6 @@ main = do
     white
     60
     world
-    (\_ -> return $ Pictures [])
-    (\e w -> return w)
+    (return . transformer . renderW)
+    (\e w -> return $ execState (event e) w)
     (\df w -> return $ execState (tick df) w)
