@@ -20,10 +20,11 @@ import Graphics.Gloss (Color, Picture (..), Point, blank, circle, color, line, t
 import Graphics.Gloss.Interface.IO.Game (Event)
 import ScEaHs.Game (losers)
 import ScEaHs.Game.Surface.Generator (SurfaceWithGenerator (..))
-import ScEaHs.Game.World (Explosion (..), ExplosionSource (..), SStatus (..), Status (..), World (..), pcolor)
+import ScEaHs.Game.World (SStatus (..), Status (..), World (..), pcolor)
 import qualified ScEaHs.Game.World as Game
 import ScEaHs.Plugin (GamePlugin (..), GamePluginState)
 import ScEaHs.Utils.List (uncons')
+import ScEaHs.Game.Projectile (Explosion (..), ProjectileSource (..))
 
 symbols :: [Picture]
 symbols =
@@ -60,7 +61,7 @@ $(makeLenses ''ProjectileHit)
 $(makeLenses ''ProjectileHistory)
 
 recordExplosion :: Explosion -> Color -> State ProjectileHistory ()
-recordExplosion (Explosion {_epos = p, _src = ExplosionSource {_escontrols = cnt}}) c = do
+recordExplosion (Explosion {_epos = p, _src = ProjectileSource {_icontrols = cnt}}) c = do
   hs <- pictures %%= uncons'
   idx <- picturesIdx <<%= (+ 1)
   let ph = ProjectileHit p cnt (color c hs) idx

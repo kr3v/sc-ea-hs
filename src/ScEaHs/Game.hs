@@ -9,10 +9,10 @@ import Data.List (find, uncons, unfoldr)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, fromJust)
 import Graphics.Gloss (Point)
-import ScEaHs.Game.Projectile (Projectile (..))
+import ScEaHs.Game.Projectile (Explosion (..), Projectile (..), ProjectileSource (..), radius)
 import ScEaHs.Game.Surface (Surface, heights, isWithinSurface, putOn')
 import ScEaHs.Game.Surface.Generator (SurfaceWithGenerator (..), surface, updateSurface)
-import ScEaHs.Game.World (Explosion (Explosion), ExplosionSource (..), SStatus (WSS_PLAYER_INPUT, WSS_TURN_IN_PROGRESS), Status (_wstatus), World (_explosion, _players, _projectile, _status, _surfaceG), explosion, health, players, pos, projectile, radius, score, status, surfaceG, turn, wstatus)
+import ScEaHs.Game.World (SStatus (WSS_PLAYER_INPUT, WSS_TURN_IN_PROGRESS), Status (_wstatus), World (_explosion, _players, _projectile, _status, _surfaceG), explosion, health, players, pos, projectile, score, status, surfaceG, turn, wstatus)
 import qualified ScEaHs.Game.World as Game
 import ScEaHs.Utils.Geometry (distance, intersectionCircleVerticalLine)
 
@@ -37,12 +37,12 @@ gravityForce :: Float
 gravityForce = 10
 
 projectileTick :: Float -> Surface -> Projectile -> (Maybe Point, Maybe Projectile)
-projectileTick df s (Projectile (x0, y0) (vx, vy) t) =
+projectileTick df s (Projectile (x0, y0) (vx, vy) t src) =
   let dx = vx * animationSpeed * df
       dy = vy * animationSpeed * df
       x1 = x0 + dx
       y1 = y0 + dy
-      p = Projectile (x1, y1) (vx, vy - gravityForce * animationSpeed * df) t
+      p = Projectile (x1, y1) (vx, vy - gravityForce * animationSpeed * df) t src
       xs = filter (isWithinSurface s) $ produce (min x0 x1) (max x0 x1)
       ys = (\x -> if dx < 0.01 then y0 else (x - x0) / dx * dy + y0) <$> xs
       hs = (\x -> snd $ putOn' s (x, 0)) <$> xs
@@ -91,10 +91,10 @@ losers :: Game.World -> Map.Map Int Game.Player
 losers w = Map.filter ((<= 0) . view health) $ view players w
 
 tick1 :: Float -> Game.World -> Game.World
-tick1 df w@(Game.World {_surfaceG = SurfaceWithGenerator {_surface = s}, _projectile = (Just p), _status = Game.Status {_wstatus = WSS_TURN_IN_PROGRESS}}) =
+tick1 df w@(Game.World {_surfaceG = SurfaceWithGenerator {_surface = s}, _projectile = (Just p@Projectile {_psrc = psrc}), _status = Game.Status {_wstatus = WSS_TURN_IN_PROGRESS}}) =
   let (c, p') = projectileTick df s p
    in case c of
-        Just c' -> set projectile Nothing . set explosion (Just $ Explosion c' 0 10 (ExplosionSource (0, 0) (0, 0) (0, 0))) $ w
+        Just c' -> set projectile Nothing . set explosion (Just $ Explosion c' 0 10 psrc) $ w
         Nothing -> set projectile p' w
 tick1 df w@(Game.World {_surfaceG = SurfaceWithGenerator {_surface = s}, _explosion = Just e@(Explosion c@(x, y) r mr _), _status = Game.Status {_wstatus = WSS_TURN_IN_PROGRESS}})
   | r < mr = over (explosion . _Just . radius) ((df * animationSpeed) +) w

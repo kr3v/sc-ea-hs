@@ -19,7 +19,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromJust)
 import Graphics.Gloss.Interface.IO.Game (Event (EventKey), Key (SpecialKey), KeyState (Down, Up), SpecialKey (KeyDown, KeyLeft, KeyRight, KeySpace, KeyUp))
 import qualified ScEaHs.Game as Game
-import ScEaHs.Game.Projectile (Projectile (..), ProjectileType (..))
+import ScEaHs.Game.Projectile (Projectile (..), ProjectileSource (..), ProjectileType (..))
 import ScEaHs.Game.World (SStatus (..), Status (..), World (..))
 import qualified ScEaHs.Game.World as Game
 import ScEaHs.Plugin (GamePlugin (..), GamePluginState)
@@ -89,10 +89,11 @@ specialKeyDownHandler k = do
 createProjectile :: PlayerControls -> Game.Player -> Projectile
 createProjectile (PlayerControls a s) (Game.Player (x0, y0) c _) =
   let s' :: Float = fromIntegral (unwrap s)
-      a' :: Float = fromIntegral (unwrap a) * pi / 180
-      vx = s' * cos a'
-      vy = s' * sin a'
-   in Projectile (x0, y0 + 5) (vx, vy) SHELL
+      a' :: Float = fromIntegral (unwrap a)
+      aR :: Float = a' * pi / 180
+      vx = s' * cos aR
+      vy = s' * sin aR
+   in Projectile (x0, y0 + 5) (vx, vy) SHELL ProjectileSource {_ifrom = (x0, y0), _ivel = (vx, vy), _icontrols = (a', s')}
 
 projectileLaunch :: ControlsPluginState s
 projectileLaunch = do

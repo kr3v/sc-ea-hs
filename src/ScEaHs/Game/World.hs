@@ -11,7 +11,7 @@ import Graphics.Gloss.Data.Color (Color)
 import Graphics.Gloss.Data.Picture (Picture)
 import Graphics.Gloss.Interface.IO.Game (SpecialKey)
 import Numeric (showFFloat)
-import ScEaHs.Game.Projectile (Projectile)
+import ScEaHs.Game.Projectile (Projectile, Explosion (..))
 import ScEaHs.Game.Surface.Generator (SurfaceWithGenerator)
 import ScEaHs.Utils.Format (showF2, showTF2)
 import GHC.Generics (Generic)
@@ -31,19 +31,6 @@ data Player = Player
   }
   deriving (Show)
 
-data ExplosionSource = ExplosionSource
-  { _espos :: Point,
-    _esvel :: Vector,
-    _escontrols :: (Float, Float)
-  }
-
-data Explosion = Explosion
-  { _epos :: Point,
-    _radius :: Float,
-    _maxRadius :: Float,
-    _src :: ExplosionSource
-  }
-
 data World = World
   { _surfaceG :: SurfaceWithGenerator,
     _players :: Map.Map Int Player,
@@ -54,15 +41,9 @@ data World = World
   }
   deriving (Generic)
 
-instance Show Explosion where
-  show :: Explosion -> String
-  show (Explosion p r mr _) = "Explosion " ++ showTF2 p ++ " " ++ showF2 r ++ " " ++ showF2 mr
-
 $(makeLenses ''Player)
 $(makeLenses ''World)
 $(makeLenses ''Status)
-$(makeLenses ''Explosion)
-$(makeLenses ''ExplosionSource)
 
 player :: World -> Int -> Maybe Player
 player w idx = w ^. players . at idx

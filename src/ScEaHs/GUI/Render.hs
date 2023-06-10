@@ -17,10 +17,10 @@ import Graphics.Gloss.Data.Color (black, greyN, orange)
 import Graphics.Gloss.Data.Picture (Picture (..), circleSolid, color, rectangleSolid, scale, text, translate)
 import ScEaHs.GUI.Plugins.Controls (ControlsPlugin, ControlsPluginState, PlayerControls (..), playersControls)
 import ScEaHs.GUI.Plugins.History (HistoryPlugin, HistoryPluginState, ProjectileHistory, ProjectileHit (..), history, hits)
-import ScEaHs.Game.Projectile (Projectile (..))
+import ScEaHs.Game.Projectile (Explosion (..), Projectile (..))
 import ScEaHs.Game.Surface (Surface (..))
 import ScEaHs.Game.Surface.Generator (SurfaceWithGenerator (..))
-import ScEaHs.Game.World (Explosion (Explosion), Player (Player), SStatus (WSS_PLAYER_INPUT), Status (Status), World (..), players)
+import ScEaHs.Game.World (Player (Player), SStatus (WSS_PLAYER_INPUT), Status (Status), World (..), players)
 import qualified ScEaHs.Game.World as Game
 import qualified ScEaHs.Game.World as World
 import ScEaHs.Plugin (GamePlugin, GamePluginStateR)
@@ -66,18 +66,9 @@ instance Renderable Game.Player where
   render :: Game.Player -> Picture
   render (Game.Player (x, y) c _) = color c $ translate x y $ rectangleSolid 10 10
 
--- instance Renderable GUI.Player where
---   render :: GUI.Player -> Picture
---   render (GUI.Player o@(Game.Player (x, y) _ _) (PlayerControls a s)) =
---      in ps
-
--- instance TextualInfo GUI.Player where
---   info :: GUI.Player -> String
---   info (GUI.Player p c) = info c ++ ", health: " ++ showF2 (view World.health p)
-
 instance Renderable Projectile where
   render :: Projectile -> Picture
-  render (Projectile (x, y) _ _) = color black $ translate x y $ rectangleSolid 5 5
+  render (Projectile {_ppos = (x, y)}) = color black $ translate x y $ rectangleSolid 5 5
 
 instance Renderable Explosion where
   render :: Explosion -> Picture
@@ -114,6 +105,6 @@ instance RenderableS ControlsPlugin s where
     controls <- use (typed @ControlsPlugin . playersControls)
     let playersWithControls = Map.intersectionWith (,) players controls
 
-    let debugInfoP = Pictures $ uncurry debugInfo <$> Map.assocs controls
+    let debugInfoP = translate 5 1000 $ Pictures $ uncurry debugInfo <$> Map.assocs controls
     let projectionsP = Pictures $ concatMap (uncurry projections) (Map.elems playersWithControls)
     return $ debugInfoP <> projectionsP
