@@ -19,12 +19,13 @@ import GHC.Generics (Generic)
 import Graphics.Gloss (Color, Picture (..), Point, blank, circle, color, line, translate)
 import Graphics.Gloss.Interface.IO.Game (Event)
 import ScEaHs.Game (losers)
+import ScEaHs.Game.Explosion (Explosion (..))
+import ScEaHs.Game.Projectile (ProjectileSource (..))
 import ScEaHs.Game.Surface.Generator (SurfaceWithGenerator (..))
 import ScEaHs.Game.World (SStatus (..), Status (..), World (..), pcolor)
 import qualified ScEaHs.Game.World as Game
 import ScEaHs.Plugin (GamePlugin (..), GamePluginState)
 import ScEaHs.Utils.List (uncons')
-import ScEaHs.Game.Projectile (Explosion (..), ProjectileSource (..))
 
 symbols :: [Picture]
 symbols =

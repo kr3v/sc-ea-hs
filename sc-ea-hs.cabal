@@ -70,7 +70,10 @@ library sc-ea-hs-lib
         , ScEaHs.Game.Surface
         , ScEaHs.Game.Surface.Generator
         , ScEaHs.Game.World
+        , ScEaHs.Game.Explosion
+        , ScEaHs.Game.Explosion.Logic
         , ScEaHs.Game.Projectile
+        , ScEaHs.Game.Projectile.Logic
         , ScEaHs.Utils.BoundedPlus
         , ScEaHs.Utils.Format
         , ScEaHs.Utils.Geometry
